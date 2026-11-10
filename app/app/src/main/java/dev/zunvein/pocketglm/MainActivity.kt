@@ -13,6 +13,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -103,7 +104,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Fetch GET /health from the local bridge and render a compact summary. */
     private fun fetchHealth(): String {
-        return try {
+        val health = try {
             val conn = URL("http://127.0.0.1:3001/health").openConnection() as HttpURLConnection
             conn.connectTimeout = 1500
             conn.readTimeout = 1500
@@ -112,8 +113,18 @@ class MainActivity : AppCompatActivity() {
             conn.disconnect()
             renderHealth(body)
         } catch (e: Exception) {
-            "Bridge: starting… (no response yet)\n${e.javaClass.simpleName}"
+            "Bridge: starting… (no response yet)\n${e.javaClass.simpleName}: ${e.message}"
         }
+        // Append the tail of bridge.log when the bridge is not up yet —
+        // this surfaces extraction/exec failures that never reach /health.
+        if (!health.startsWith("Bridge: UP")) {
+            val log = File(filesDir, "bridge/bridge.log")
+            if (log.exists()) {
+                val tail = log.readText().lines().takeLast(8).joinToString("\n")
+                return health + "\n\n—— bridge.log tail ——\n" + tail
+            }
+        }
+        return health
     }
 
     private fun renderHealth(body: String): String {

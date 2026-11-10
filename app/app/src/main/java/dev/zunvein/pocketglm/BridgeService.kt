@@ -58,6 +58,7 @@ class BridgeService : Service() {
 
                 if (!binary.exists() || binary.length() == 0L) {
                     extractBinary(binary)
+                    android.util.Log.i("PocketGLM", "extracted bridge binary: ${binary.length()} bytes")
                 }
 
                 // Boot guard: the bridge refuses to start without a token DB.
@@ -71,9 +72,21 @@ class BridgeService : Service() {
                     .redirectOutput(logFile)
                     .start()
             } catch (e: Exception) {
-                android.util.Log.e("PocketGLM", "failed to start bridge", e)
+                android.util.Log.e("PocketGLM", "FAILED to start bridge", e)
+                captureFailure(e)
             }
         }.start()
+    }
+
+    /** Write the failure into filesDir/bridge/bridge.log so the UI can show it. */
+    private fun captureFailure(e: Exception) {
+        try {
+            val logFile = File(File(filesDir, "bridge"), "bridge.log")
+            logFile.appendText("\n[app] ${e.javaClass.simpleName}: ${e.message}\n")
+            val listed = assets.list("bridge")?.joinToString(", ") ?: "(none)"
+            logFile.appendText("[app] assets/bridge/ contains: $listed\n")
+        } catch (ignored: Exception) {
+        }
     }
 
     private fun stopBridge() {

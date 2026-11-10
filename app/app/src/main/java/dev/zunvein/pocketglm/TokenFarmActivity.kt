@@ -91,24 +91,35 @@ class TokenFarmActivity : Activity() {
         wv.addJavascriptInterface(HarvestBridge(), "PocketGLM")
     }
 
-    /** JS-callable bridge: receives Log1 DeviceConfig + token from the page. */
+    /** JS-callable bridge: receives Log1 DeviceConfig + token from the page.
+     *  NOTE: these callbacks run on a private WebView binder thread, NOT the
+     *  UI thread — everything touching UI state is hopped to the main thread. */
     private inner class HarvestBridge {
         @android.webkit.JavascriptInterface
         fun onLog1(body: String) {
-            log1Body = body
-            log("Log1 captured (${body.length} bytes)")
+            runOnUiThread {
+                log1Body = body
+                log("Log1 captured (${body.length} bytes)")
+            }
         }
 
         @android.webkit.JavascriptInterface
         fun onToken(token: String) {
-            deviceToken = token
-            log("device token harvested (${token.length} chars) — inserting into pool")
-            TokenStore.insert(applicationContext, token)
+            runOnUiThread {
+                deviceToken = token
+                log("device token harvested (${token.length} chars) — inserting into pool")
+                try {
+                    TokenStore.insert(applicationContext, token)
+                    log("inserted into pool ✓ (tokens: ${TokenStore.count(applicationContext)})")
+                } catch (e: Exception) {
+                    log("ERROR inserting token: ${e.javaClass.simpleName}: ${e.message}")
+                }
+            }
         }
 
         @android.webkit.JavascriptInterface
         fun onError(msg: String) {
-            log("ERROR: $msg")
+            runOnUiThread { log("ERROR: $msg") }
         }
     }
 
