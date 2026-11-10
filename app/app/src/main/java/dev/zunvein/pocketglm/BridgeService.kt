@@ -120,18 +120,29 @@ class BridgeService : Service() {
      * The Go bridge is a pure-Go (netgo) binary: it does NOT use Android's
      * system resolver and there is no /etc/resolv.conf in an app process,
      * so every hostname lookup would die on [::1]:53. We read the device's
-     * current DNS servers from ConnectivityManager and pass them to the
-     * bridge via ZAI_DNS; the bridge installs a resolver that uses them.
+     * current DNS servers from ConnectivityManager (requires
+     * ACCESS_NETWORK_STATE) and pass them to the bridge via ZAI_DNS; the
+     * bridge installs a resolver that uses them. If the device list is
+     * unavailable for any reason we fall back to public resolvers so the
+     * bridge is never left with a dead resolver.
      */
     private fun deviceDnsServers(): String {
+        val fallback = "1.1.1.1,8.8.8.8"
         return try {
             val cm = getSystemService(android.net.ConnectivityManager::class.java)
-            val link = cm.getLinkProperties(cm.activeNetwork) ?: return ""
-            val servers = link.dnsServers.joinToString(",") { it.hostAddress ?: it.hostName }
-            appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$servers")
-            servers
+            val link = cm.getLinkProperties(cm.activeNetwork)
+                ?: return fallback.also { appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$it (no active network, public fallback)") }
+            val servers = link.dnsServers.joinToString(",") { it.hostAddress ?: "" }.trim(',')
+            if (servers.isEmpty()) {
+                appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$fallback (empty device DNS list, public fallback)")
+                fallback
+            } else {
+                appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$servers")
+                servers
+            }
         } catch (e: Exception) {
-            ""
+            appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$fallback (${e.javaClass.simpleName}, public fallback)")
+            fallback
         }
     }
 
