@@ -39,6 +39,16 @@ class MainActivity : AppCompatActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var bridgeAlive = false
     private var pollJob: Job? = null
+    private var resumed = false
+    // Written on the IO thread by renderHealth, read on the main thread.
+    @Volatile private var lastTokenCount = -1
+    private var lastTopUpAt = 0L
+    private lateinit var autoSwitch: android.widget.Switch
+
+    companion object {
+        private const val PREF_AUTO_TOPUP = "auto_topup"
+        private const val LOW_POOL = 3
+    }
 
     private lateinit var toggleButton: Button
     private lateinit var farmButton: Button
@@ -79,6 +89,14 @@ class MainActivity : AppCompatActivity() {
         curlText = mono()
         testResult = mono().apply { text = "" }
 
+        autoSwitch = android.widget.Switch(this).apply {
+            text = "Auto top-up when tokens run low"
+            isChecked = prefs().getBoolean(PREF_AUTO_TOPUP, true)
+            setOnCheckedChangeListener { _, on ->
+                prefs().edit().putBoolean(PREF_AUTO_TOPUP, on).apply()
+            }
+        }
+
         val copyKeyButton = Button(this).apply { text = "Copy key" }
         val newKeyButton = Button(this).apply { text = "Generate new key" }
         val customKeyButton = Button(this).apply { text = "Set custom key" }
@@ -91,6 +109,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
             addView(toggleButton)
             addView(farmButton)
+            addView(autoSwitch)
             addView(copyButton)
             addView(statusText)
 
@@ -298,6 +317,7 @@ class MainActivity : AppCompatActivity() {
             while (isActive) {
                 val status = withContext(Dispatchers.IO) { fetchHealth() }
                 statusText.text = status
+                maybeTopUp()
                 delay(2000)
             }
         }
@@ -326,6 +346,7 @@ class MainActivity : AppCompatActivity() {
             conn.disconnect()
             renderHealth(body, code)
         } catch (e: Exception) {
+            lastTokenCount = -1
             "Bridge: starting… (no response yet)\n${e.javaClass.simpleName}: ${e.message}"
         }
         // Append the tail of bridge.log when the bridge is not up yet —
@@ -346,7 +367,8 @@ class MainActivity : AppCompatActivity() {
             val captcha = o.optJSONObject("captcha")
             val sb = StringBuilder(if (code == 200) "Bridge: UP\n" else "Bridge: UP (warming up, HTTP $code)\n")
             sb.append("healthy: ").append(o.optBoolean("healthy")).append('\n')
-            sb.append("tokens: ").append(o.optInt("tokenCount", -1)).append('\n')
+            lastTokenCount = o.optInt("tokenCount", -1)
+            sb.append("tokens: ").append(lastTokenCount).append('\n')
             if (captcha != null) {
                 sb.append("breaker: ").append(captcha.optString("breaker")).append('\n')
                 sb.append("computeOK: ").append(captcha.optLong("computeOK", 0)).append('\n')
@@ -360,8 +382,35 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        resumed = false
+        super.onPause()
+    }
+
+    /**
+     * While the app is open and the bridge is up, open the farm on its own
+     * when the pool is nearly empty. A cool-down keeps a failing farm from
+     * reopening in a loop: 2 min after a success, 10 min after a failure.
+     */
+    private fun maybeTopUp() {
+        if (!resumed || !bridgeAlive || !autoSwitch.isChecked) return
+        if (lastTokenCount < 0 || lastTokenCount > LOW_POOL) return
+        if (TokenFarmActivity.running) return
+        val now = System.currentTimeMillis()
+        val cooldown = if (TokenFarmActivity.lastResultOk) 2 * 60_000L else 10 * 60_000L
+        val last = maxOf(lastTopUpAt, TokenFarmActivity.lastFinishedAt)
+        if (last != 0L && now - last < cooldown) return
+        lastTopUpAt = now
+        startActivity(Intent(this, TokenFarmActivity::class.java).apply {
+            putExtra(TokenFarmActivity.EXTRA_AUTO, true)
+        })
+    }
+
+    private fun prefs() = getSharedPreferences("pocketglm", Context.MODE_PRIVATE)
+
     override fun onResume() {
         super.onResume()
+        resumed = true
         // Wi-Fi address may have changed while the app was in the background.
         refreshApiCard()
     }
