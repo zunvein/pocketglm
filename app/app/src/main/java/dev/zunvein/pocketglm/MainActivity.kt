@@ -138,7 +138,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectTab(i: Int) {
         tab = i
-        pages.forEachIndexed { idx, v -> v.visibility = if (idx == i) View.VISIBLE else View.GONE }
+        pages.forEachIndexed { idx, v ->
+            if (idx == i) {
+                // Fade the newly shown tab in. Framework animator: no extra library, no APK size.
+                if (v.visibility != View.VISIBLE) {
+                    v.alpha = 0f
+                    v.visibility = View.VISIBLE
+                    v.animate().alpha(1f).setDuration(180L).start()
+                }
+            } else {
+                v.animate().cancel()
+                v.visibility = View.GONE
+            }
+        }
         tabLabels.forEachIndexed { idx, t ->
             val c = Ui.color(this, if (idx == i) R.color.accent else R.color.textDim)
             t.setTextColor(c)

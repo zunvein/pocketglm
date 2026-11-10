@@ -11,8 +11,8 @@ android {
         applicationId = "dev.zunvein.pocketglm"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "0.3.5-alpha"
+        versionCode = 11
+        versionName = "0.3.6-alpha"
     }
 
     buildTypes {
