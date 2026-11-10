@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   bridge:
     runs-on: ubuntu-latest
@@ -99,3 +102,66 @@ jobs:
           name: PocketGLM-debug-APK
           path: app/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Public fingerprint of the pinned signing certificate. A build signed
+      # with anything else must not be published as an update.
+      EXPECTED_CERT_SHA256: 321b71c8dfbebed811b7552b65f5cd180b344b7fcfd809b8b4194242386b491c
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketGLM-debug-APK
+          path: dist
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/app/build.gradle.kts | head -n 1)
+          [ -n "$VERSION" ] || { echo "versionName not found"; exit 1; }
+          TAG="v${VERSION}"
+
+          APK="dist/PocketGLM-${TAG}.apk"
+          mv "$(ls dist/*.apk | head -n 1)" "$APK"
+
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)
+          if [ "$CERT" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "signing certificate changed, refusing to publish"
+            exit 1
+          fi
+          APK_SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+
+          {
+            if [ -f "docs/releases/${TAG}.md" ]; then
+              cat "docs/releases/${TAG}.md"
+            else
+              echo "No hand-written notes for ${TAG} yet."
+            fi
+            echo
+            echo "---"
+            echo
+            echo "Build: commit ${GITHUB_SHA::7}, workflow run ${GITHUB_RUN_NUMBER}"
+            echo
+            echo "APK SHA-256: \`${APK_SHA}\`"
+            echo
+            echo "Signing certificate SHA-256: \`${CERT}\`"
+          } > release-notes.md
+
+          # One release per version: a newer build of the same version replaces it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --cleanup-tag --yes
+          fi
+          gh release create "$TAG" "$APK" \
+            --title "PocketGLM ${VERSION}" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --target "$GITHUB_SHA"

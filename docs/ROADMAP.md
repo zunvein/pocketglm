@@ -8,7 +8,7 @@ Working notes for the glm (VPS, x86_64, systemd) → PocketGLM (Android, arm64, 
 - **On-demand, not 24/7.** Start when needed (short sessions, ≤6 h), clean stop. One Start/Stop button; no daemons outlive the app.
 - **No heavy distro / no Termux dependency in the end product.** Target = a single Kotlin APK.
 - **Verify, don't assume.** Test each technical gate cheaply before committing the architecture.
-- **Changes wait for an explicit go-ahead** — except items tagged P0 (backup, time-sensitive).
+- **Work goes straight to `main`.** Every push builds, and the release notes live in `docs/releases/`. This file is a historical log; the README and the releases hold the current status.
 
 ## Deadline
 
