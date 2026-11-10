@@ -21,17 +21,18 @@ android {
         }
         debug {
             // Stable CI signing: same keystore every build (uploaded as GHA
-            // secrets) so Android does not treat each CI build as a different
-            // app. Falls back to default debug signing locally on a dev box.
-            val ksB64 = System.getenv("POCKETGLM_KEYSTORE_B64")
-            if (ksB64 != null) {
+            // secrets) so Android sees every CI build as the same app.
+            // Falls back to default debug signing locally on a dev box.
+            // CI decodes the keystore to a file in the workflow step
+            // (POCKETGLM_KEYSTORE_FILE) — no base64 handling inside Gradle.
+            val ksFile = File(rootProject.projectDir, "keystore/pocketglm.keystore")
+            val ksPass = System.getenv("POCKETGLM_KEYSTORE_PASSWORD")
+            if (ksFile.exists() && !ksPass.isNullOrEmpty()) {
                 signingConfig = signingConfigs.create("pocketglm") {
-                    val ksFile = File(rootProject.projectDir, "keystore/pocketglm.keystore")
-                    java.util.Base64.getDecoder().decode(ksB64).let { ksFile.parentFile?.mkdirs(); ksFile.writeBytes(it) }
                     storeFile = ksFile
-                    storePassword = System.getenv("POCKETGLM_KEYSTORE_PASSWORD")
+                    storePassword = ksPass
                     keyAlias = "pocketglm"
-                    keyPassword = System.getenv("POCKETGLM_KEYSTORE_PASSWORD")
+                    keyPassword = ksPass
                     storeType = "PKCS12"
                 }
             }

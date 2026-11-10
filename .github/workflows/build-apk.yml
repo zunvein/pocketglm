@@ -71,8 +71,17 @@ jobs:
         with:
           build-root-directory: app
 
-      - name: Build debug APK
+      - name: Decode CI keystore
+        env:
+          POCKETGLM_KEYSTORE_B64: ${{ secrets.POCKETGLM_KEYSTORE_B64 }}
+        run: |
+          mkdir -p app/keystore
+          printf '%s' "$POCKETGLM_KEYSTORE_B64" | base64 -d > app/keystore/pocketglm.keystore
+
+      - name: Build debug APK (stable CI signing)
         working-directory: app
+        env:
+          POCKETGLM_KEYSTORE_PASSWORD: ${{ secrets.POCKETGLM_KEYSTORE_PASSWORD }}
         run: gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
 
       - name: Report artifact
