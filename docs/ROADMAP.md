@@ -42,12 +42,20 @@ Pelajaran storm #3 berlaku: jangan asumsi "fresh identity = immune" tanpa tes.
 
 ## P2 — Bridge di Android (binary)
 
-- [ ] Cross-compile `GOOS=android GOARCH=arm64` (pure-Go, no CGO — sudah diverifikasi via
-      go.mod `modernc.org/sqlite`). Build di GHA, bukan di VPS (VPS gak kuat & mau expire).
-- [ ] GHA workflow: build + test + attach artifact `zai-api-android-arm64`.
+- [x] ~~Cross-compile `GOOS=android GOARCH=arm64`~~ **DONE 2026-11-10**: GHA workflow
+      `build-android-arm64` green (commit `6a30b67`); vet+test CI PASS; smoke test:
+      binary linux hidup + `/health` respond port default 3001.
+      Artifact `zai-api-android-arm64` ~5.4 MB ter-upload tiap push.
+      (pure-Go, no CGO terverifikasi via go.mod `modernc.org/sqlite`)
 - [ ] Smoke test di HP: exec binary dari data dir, `/health` jalan, SSE end-to-end
       (`data: [DONE]` + zero error events), pool sqlite aktif di path Android.
 - [ ] Storm-drill port: drill versi Android (swap bogus pool → standby → request #4 OK).
+
+### Catatan build GHA (pelajaran 10 Nov)
+- Boot guard: binary exit-1 kalau `tokens.sqlite` gak ada → smoke test harus bikin
+  dummy db dulu (`CREATE TABLE tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)`).
+- Port default = **3001** (3012 cuma systemd VPS override).
+- `zai-smoke` warmup session jalan asinkron → `/health` respond walau pool warmup belum selesai.
 
 ## P3 — Kotlin shell (APK)
 
