@@ -96,13 +96,20 @@ class BridgeService : Service() {
         stopSelf()
     }
 
-    /** Copies the ARM64 bridge binary out of APK assets into filesDir. */
+    /**
+     * Copies the ARM64 bridge binary into filesDir and marks it executable.
+     * The binary ships as jniLibs/arm64-v8a/libzai.so (nativeLibs dir is
+     * extracted by the installer already, but app data dir is the only place
+     * we can reliably chmod +x and NULL-deref exec on every device).
+     */
     private fun extractBinary(target: File) {
-        assets.open("bridge/$BINARY_NAME").use { input ->
-            FileOutputStream(target).use { output -> input.copyTo(output) }
-        }
+        val src = File(applicationInfo.nativeLibraryDir, "libzai.so")
+        src.copyTo(target, overwrite = true)
         // exec permission is required to spawn the process
         target.setExecutable(true, false)
+        // W^X hardening on modern Android: strip the write bit on some
+        // devices exec requires the file NOT be writable
+        target.setWritable(false, false)
     }
 
     /**

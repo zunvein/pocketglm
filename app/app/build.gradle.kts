@@ -38,6 +38,14 @@ android {
         }
     }
 
+    packaging {
+        // The "jni library" is actually the Go bridge binary; never strip or
+        // compress it (executable must land byte-identical).
+        jniLibs {
+            keepDebugSymbols += listOf("**/libzai.so")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

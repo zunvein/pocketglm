@@ -105,7 +105,9 @@ class MainActivity : AppCompatActivity() {
     /** Fetch GET /health from the local bridge and render a compact summary. */
     private fun fetchHealth(): String {
         val health = try {
-            val conn = URL("http://127.0.0.1:3001/health").openConnection() as HttpURLConnection
+            val conn = java.net.Proxy.NO_PROXY.let { urlProxied ->
+                URL("http://127.0.0.1:3001/health").openConnection(urlProxied) as HttpURLConnection
+            }
             conn.connectTimeout = 1500
             conn.readTimeout = 1500
             conn.requestMethod = "GET"
