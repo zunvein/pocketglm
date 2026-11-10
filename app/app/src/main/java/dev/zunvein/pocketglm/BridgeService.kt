@@ -83,8 +83,8 @@ class BridgeService : Service() {
         try {
             val logFile = File(File(filesDir, "bridge"), "bridge.log")
             logFile.appendText("\n[app] ${e.javaClass.simpleName}: ${e.message}\n")
-            val listed = assets.list("bridge")?.joinToString(", ") ?: "(none)"
-            logFile.appendText("[app] assets/bridge/ contains: $listed\n")
+            val nat = File(applicationInfo.nativeLibraryDir, "libzai.so")
+            logFile.appendText("[app] nativeLibraryDir libzai.so exists: ${nat.exists()} (${nat.length()} bytes)\n")
         } catch (ignored: Exception) {
         }
     }

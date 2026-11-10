@@ -56,12 +56,12 @@ android {
         jvmTarget = "17"
     }
 
-    // The Go bridge binary is downloaded by CI into src/main/assets/bridge/
-    // (zai-api-android-arm64) before the APK is assembled, so it ships inside
-    // the APK and is extracted to filesDir on first launch.
+    // The Go bridge binary ships as jniLibs/arm64-v8a/libzai.so (native
+    // library packaging keeps it uncompressed + executable) and is copied
+    // from applicationInfo.nativeLibraryDir at first launch.
     sourceSets {
         getByName("main") {
-            assets.srcDirs("src/main/assets")
+            // default dirs only; no custom assets needed
         }
     }
 }

@@ -25,8 +25,8 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/zai-smoke .
-          GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/assets/bridge/zai-api-android-arm64 .
-          file app/app/src/main/assets/bridge/zai-api-android-arm64
+          GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/jniLibs/arm64-v8a/libzai.so .
+          file app/app/src/main/jniLibs/arm64-v8a/libzai.so
 
       - name: Smoke test (linux build, same code)
         run: |
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: zai-api-android-arm64
-          path: app/app/src/main/assets/bridge/zai-api-android-arm64
+          path: app/app/src/main/jniLibs/arm64-v8a/libzai.so
           retention-days: 30
 
   apk:
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: zai-api-android-arm64
-          path: app/app/src/main/assets/bridge/
+          path: app/app/src/main/jniLibs/arm64-v8a/
 
       - uses: actions/setup-java@v4
         with:
