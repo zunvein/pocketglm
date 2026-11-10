@@ -1,6 +1,6 @@
-# glmroid Roadmap
+# PocketGLM Roadmap
 
-Working notes for the glm (VPS, x86_64, systemd) → glmroid (Android, arm64, on-demand app) port. This is an experiment, not a product.
+Working notes for the glm (VPS, x86_64, systemd) → PocketGLM (Android, arm64, on-demand app) port. This is an experiment, not a product.
 
 ## Principles
 
@@ -20,8 +20,8 @@ The origin VPS expires **~1 week from 2026-11-10**. Priorities:
 ## P0 — Final backup (URGENT, while the origin VPS is alive)
 
 - [x] Repo `zunvein/glm` = `633abfc` pushed, secret-scan clean (verified 2026-11-01).
-- [x] Repo `zunvein/glmroid` created 2026-11-10; tree assembled from glm main + `go.mod`+`go.sum`
-      (glm deliberately does not track go.mod; glmroid tracks it so GHA can build without the VPS).
+- [x] Repo `zunvein/pocketglm` created 2026-11-10; tree assembled from glm main + `go.mod`+`go.sum`
+      (glm deliberately does not track go.mod; PocketGLM tracks it so GHA can build without the VPS).
 - [ ] Secrets handed over privately (never in the repo): bridge AUTH\_TOKEN, upstream Z.AI JWT(s).
       A phone only needs: AUTH\_TOKEN + at least one Z.AI JWT.
 - [ ] Optional: write the systemd unit config down (ZAI_TOKENS format, env knobs) → docs/config.md.

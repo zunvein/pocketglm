@@ -1,10 +1,10 @@
-# glmroid
+# PocketGLM 📱
 
 > ⚠️ **Experimental project — proof of concept.** Not affiliated with Z.AI / ChatGLM / Aliyun.
 
 **Run a GLM bridge entirely on an Android phone — bundled in one app.**
 
-glmroid is an experiment in taking a self-hosted GLM (chat.z.ai) bridge that normally lives on a server and shrinking it into a single Android APK: the same Go bridge code, cross-compiled to `android/arm64`, launched by a thin Kotlin shell, with the device-token harvester replaced by a WebView — no Termux, no root, no Linux distribution.
+PocketGLM is an experiment in taking a self-hosted GLM (chat.z.ai) bridge that normally lives on a server and shrinking it into a single Android APK: the same Go bridge code, cross-compiled to `android/arm64`, launched by a thin Kotlin shell, with the device-token harvester replaced by a WebView — no Termux, no root, no Linux distribution.
 
 The usage model is **on-demand**: start the bridge when you need it, stop it when you're done. The phone stays a phone; nothing runs 24/7.
 
