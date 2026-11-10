@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -52,8 +51,7 @@ func dnsServersFromEnv() []string {
 	return servers
 }
 
-// installCustomDNS swaps http.DefaultTransport for one that resolves via the
-// ZAI_DNS servers. Call once at startup, before any outbound HTTP happens.
+// installCustomDNS points net.DefaultResolver at the ZAI_DNS servers. Call once at startup, before any outbound HTTP happens.
 func installCustomDNS() {
 	servers := dnsServersFromEnv()
 	if len(servers) == 0 {
@@ -66,15 +64,15 @@ func installCustomDNS() {
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			s := servers[atomic.AddUint64(&rr, 1)%uint64(len(servers))]
 			d := net.Dialer{Timeout: 3 * time.Second}
-			return d.DialContext(ctx, network, s+":53")
+			return d.DialContext(ctx, network, net.JoinHostPort(s, "53"))
 		},
 	}
 
-	base := http.DefaultTransport.(*http.Transport)
-	t := base.Clone()
-	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Resolver: resolver}
-	t.DialContext = d.DialContext
-	http.DefaultTransport = t
+	// Replace the process-wide resolver. Every net.Dialer without an
+	// explicit Resolver (dialUTLS, the aliyun/image transports, the
+	// default transport...) falls back to net.DefaultResolver, so this one
+	// assignment covers all outbound lookups, not just http.DefaultTransport.
+	net.DefaultResolver = resolver
 
 	log.Printf("[Config] DNS: using %d explicit resolver(s) from ZAI_DNS (includes public fallbacks)", len(servers))
 }
