@@ -224,7 +224,8 @@ func (t *payloadTemplate) build(s deviceSession, nowMs int64, jitterMs int) ([]s
 	}
 
 	// --- per-session ---
-	f[idxIP] = s.IP
+	// idxIP is left as the genuine token carried it: it is the same value the
+	// session reports on desktop, and a different one on some networks.
 	f[idxServerTs] = strconv.FormatInt(s.ServerTs, 10)
 	f[idxInitTime] = strconv.FormatInt(s.InitTime, 10)
 

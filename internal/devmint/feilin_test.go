@@ -257,3 +257,35 @@ func TestMintFromHarvestRejectsGarbage(t *testing.T) {
 		t.Error("negative n must be rejected")
 	}
 }
+
+// A phone's payload may carry another address in slot 42 than the one the
+// server saw (dual-stack, mobile NAT). That alone must not reject the visit,
+// and minting must keep the slot exactly as the genuine token had it.
+func TestParseHarvestToleratesDifferentIPSlot(t *testing.T) {
+	s, tpl, err := ParseHarvest(goldenDeviceConfig, goldenToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := append([]string(nil), tpl.Fields()...)
+	f[idxIP] = "2409:40f4:1234::1"
+	if err := checkLayout(&s, f); err != nil {
+		t.Fatalf("checkLayout rejected a differing IP slot: %v", err)
+	}
+	if note := ipNote(&s, f); !strings.Contains(note, "ip-slot=ipv6") || strings.Contains(note, "2409") {
+		t.Errorf("ipNote = %q", note)
+	}
+	tpl2, _ := newPayloadTemplate(f)
+	toks, err := mintTokens(s, tpl2, 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, tok := range toks {
+		out, ok, err := verifyToken(tok, s.SessionKey)
+		if err != nil || !ok {
+			t.Fatalf("token %d: ok=%v err=%v", i, ok, err)
+		}
+		if out[idxIP] != "2409:40f4:1234::1" {
+			t.Errorf("token %d: IP slot was rewritten", i)
+		}
+	}
+}

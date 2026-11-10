@@ -139,6 +139,9 @@ func MintFromHarvest(log1, token string, n int) (*Minted, error) {
 		return nil, err
 	}
 	out := &Minted{Genuine: strings.TrimSpace(token), Layout: LayoutSummary(tpl)}
+	if note := ipNote(&session, tpl.fields); note != "" {
+		out.Layout += " " + note
+	}
 	if n == 0 {
 		return out, nil
 	}
@@ -157,9 +160,6 @@ func checkLayout(sess *DeviceSession, f []string) error {
 	if len(f) <= idxServerTs {
 		return fmt.Errorf("template layout differs: %d fields, need more than %d", len(f), idxServerTs)
 	}
-	if f[idxIP] != sess.IP {
-		return fmt.Errorf("template layout differs: slot %d is not the device IP (%d fields)", idxIP, len(f))
-	}
 	if f[idxServerTs] != strconv.FormatInt(sess.ServerTs, 10) {
 		return fmt.Errorf("template layout differs: slot %d is not the server timestamp (%d fields)", idxServerTs, len(f))
 	}
@@ -169,10 +169,43 @@ func checkLayout(sess *DeviceSession, f []string) error {
 		!strings.HasPrefix(entries[len(entries)-1], logEntry94+"-") {
 		return fmt.Errorf("template layout differs: slot %d does not end with probe entries 93/94 (%d fields)", idxLog, len(f))
 	}
+	// The IP slot is deliberately not a gate: the server timestamp and the
+	// probe log already pin the layout, and the slot may legitimately hold a
+	// different address than the server saw (IPv4 vs IPv6 on a dual-stack
+	// endpoint, mobile NAT). Minting keeps it verbatim from the genuine token.
 	return nil
+}
+
+// ipKind names the shape of an address without revealing it.
+func ipKind(v string) string {
+	switch {
+	case v == "":
+		return "empty"
+	case strings.Contains(v, ":"):
+		return "ipv6"
+	case strings.Count(v, ".") == 3:
+		return "ipv4"
+	}
+	return "other"
 }
 
 // LayoutSummary is a value-free description of a harvest for logs.
 func LayoutSummary(tpl *PayloadTemplate) string {
 	return fmt.Sprintf("fields=%d", len(tpl.fields))
+}
+
+// ipNote reports, value-free, whether the payload's IP slot agrees with the
+// session. It is empty when they agree.
+func ipNote(sess *DeviceSession, f []string) string {
+	if len(f) <= idxIP || f[idxIP] == sess.IP {
+		return ""
+	}
+	where := "none"
+	for i, v := range f {
+		if sess.IP != "" && v == sess.IP {
+			where = strconv.Itoa(i)
+			break
+		}
+	}
+	return fmt.Sprintf("ip-slot=%s session-ip=%s session-ip-found-at=%s", ipKind(f[idxIP]), ipKind(sess.IP), where)
 }
