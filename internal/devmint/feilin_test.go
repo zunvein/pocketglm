@@ -1,10 +1,10 @@
-// cmd/token-collector/feilin_test.go
+// internal/devmint/feilin_test.go
 //
 // Golden-vector tests for the device-token primitives.  The vectors come from
 // .assets/resources/live_captures.md (captain-verified live traffic), so this
 // file also cross-checks the Go port against the Python reference
 // implementation in .assets/scripts/.
-package main
+package devmint
 
 import (
 	"crypto/md5"
@@ -187,4 +187,73 @@ func mustW(t *testing.T) string {
 	t.Helper()
 	raw, _ := base64.StdEncoding.DecodeString(goldenToken)
 	return strings.Split(string(raw), "#")[2]
+}
+
+// ---------- harvest -> mint (the path used by POST /admin/mint) ----------
+
+func TestParseHarvestFromBareConfigAndWrappedLog1(t *testing.T) {
+	wrapped := `{"ResultObject":{"DeviceConfig":"` + goldenDeviceConfig + `"}}`
+	for name, log1 := range map[string]string{"bare": goldenDeviceConfig, "wrapped": wrapped} {
+		s, tpl, err := ParseHarvest(log1, goldenToken)
+		if err != nil {
+			t.Fatalf("%s: ParseHarvest: %v", name, err)
+		}
+		if s.SessionID != goldenSessionID {
+			t.Errorf("%s: SessionID = %q", name, s.SessionID)
+		}
+		if s.GatherCost != "4058" {
+			t.Errorf("%s: GatherCost = %q, want the token's own 4058", name, s.GatherCost)
+		}
+		if len(tpl.Fields()) < 90 {
+			t.Errorf("%s: template has %d fields", name, len(tpl.Fields()))
+		}
+	}
+}
+
+func TestMintFromHarvestTokensVerifyAndAreDistinct(t *testing.T) {
+	m, err := MintFromHarvest(goldenDeviceConfig, goldenToken, 25)
+	if err != nil {
+		t.Fatalf("MintFromHarvest: %v", err)
+	}
+	if m.Genuine != goldenToken {
+		t.Error("genuine token must be returned unchanged")
+	}
+	if len(m.Tokens) != 25 {
+		t.Fatalf("minted %d tokens, want 25", len(m.Tokens))
+	}
+	seen := map[string]bool{goldenToken: true}
+	for i, tok := range m.Tokens {
+		if seen[tok] {
+			t.Fatalf("token %d duplicates an earlier one", i)
+		}
+		seen[tok] = true
+		if _, ok, err := VerifyToken(tok, goldenSessionKey); err != nil || !ok {
+			t.Fatalf("token %d does not verify: ok=%v err=%v", i, ok, err)
+		}
+	}
+}
+
+func TestMintFromHarvestZeroOnlyValidates(t *testing.T) {
+	m, err := MintFromHarvest(goldenDeviceConfig, goldenToken, 0)
+	if err != nil || len(m.Tokens) != 0 {
+		t.Fatalf("n=0: tokens=%d err=%v", len(m.Tokens), err)
+	}
+}
+
+func TestMintFromHarvestRejectsGarbage(t *testing.T) {
+	cases := map[string][2]string{
+		"empty log1":      {"", goldenToken},
+		"not a config":    {"AAAA", goldenToken},
+		"json w/o config": {`{"ResultObject":{}}`, goldenToken},
+		"garbage token":   {goldenDeviceConfig, "not-base64!"},
+		"tampered seal":   {goldenDeviceConfig, goldenToken[:len(goldenToken)-8] + "AAAAAAAA"},
+	}
+	for name, c := range cases {
+		if _, err := MintFromHarvest(c[0], c[1], 3); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+	if _, err := MintFromHarvest(goldenDeviceConfig, goldenToken, -1); err == nil {
+		t.Error("negative n must be rejected")
+	}
 }

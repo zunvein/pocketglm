@@ -1,4 +1,4 @@
-// cmd/token-collector/feilin.go
+// internal/devmint/feilin.go
 //
 // FeiLin / Aliyun-SAF device-token primitives, ported to Go.
 //
@@ -18,7 +18,7 @@
 // .assets/reports/aliyun-captcha-report.md and
 // .assets/resources/live_captures.md.
 
-package main
+package devmint
 
 import (
 	"bytes"

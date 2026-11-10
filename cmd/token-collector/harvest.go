@@ -30,6 +30,8 @@ import (
 	"time"
 
 	"github.com/mxschmitt/playwright-go"
+
+	"zai-api/internal/devmint"
 )
 
 // captchaSDKURL is the Aliyun captcha front-end bundle.
@@ -69,7 +71,7 @@ const bootCaptchaJS = `(async () => {
 
         let instance = null;
         window.initAliyunCaptcha({
-            SceneId: '` + sceneID + `',
+            SceneId: '` + devmint.SceneID + `',
             mode: 'embed',
             element: '#__zai_cap_el',
             button: '#__zai_cap_btn',
@@ -102,8 +104,8 @@ const bootCaptchaJS = `(async () => {
 
 // harvestResult carries everything one browser visit yields.
 type harvestResult struct {
-	Session  deviceSession
-	Template *payloadTemplate
+	Session  devmint.DeviceSession
+	Template *devmint.PayloadTemplate
 }
 
 // harvestSession performs the one-off browser visit.
@@ -189,20 +191,20 @@ func harvestSession(browser playwright.Browser) (*harvestResult, error) {
 	if lr.ResultObject.DeviceConfig == "" {
 		return nil, fmt.Errorf("Log1 response carried no DeviceConfig")
 	}
-	session, err := decryptDeviceConfig(lr.ResultObject.DeviceConfig)
+	session, err := devmint.DecryptDeviceConfig(lr.ResultObject.DeviceConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	// The genuine token's payload is the collector template for this device.
-	fields, ok, err := verifyToken(token, session.SessionKey)
+	fields, ok, err := devmint.VerifyToken(token, session.SessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt captured device token: %w", err)
 	}
 	if !ok {
 		return nil, fmt.Errorf("captured device token failed its md5 seal")
 	}
-	tpl, err := newPayloadTemplate(fields)
+	tpl, err := devmint.NewPayloadTemplate(fields)
 	if err != nil {
 		return nil, err
 	}
@@ -235,8 +237,8 @@ const MaxHarvestAttempts = 3
 // tokens are minted in-process.
 type sessionMinter struct {
 	browser      playwright.Browser
-	session      deviceSession
-	template     *payloadTemplate
+	session      devmint.DeviceSession
+	template     *devmint.PayloadTemplate
 	harvestedAt  time.Time
 	harvestCount int
 	minted       int
@@ -258,7 +260,7 @@ func (m *sessionMinter) ensure(maxAge time.Duration) error {
 	m.harvestedAt = time.Now()
 	m.harvestCount++
 	fmt.Printf("✅ Trusted device session %s (key %s) from %d field payload template\n",
-		m.session.SessionID, m.session.SessionKey, len(h.Template.fields))
+		m.session.SessionID, m.session.SessionKey, len(h.Template.Fields()))
 	return nil
 }
 
@@ -270,7 +272,7 @@ func (m *sessionMinter) mint(n int) ([]string, error) {
 	if m.template == nil {
 		return nil, fmt.Errorf("no payload template - harvest first")
 	}
-	toks, err := mintTokens(m.session, m.template, n, 0)
+	toks, err := devmint.MintTokens(m.session, m.template, n, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +303,7 @@ func (m *sessionMinter) exportSession(path string) error {
 			"tC":         m.session.GatherCost,
 			"region":     m.session.Region,
 		},
-		"template": m.template.fields,
+		"template": m.template.Fields(),
 	}
 	data, err := json.MarshalIndent(blob, "", "  ")
 	if err != nil {

@@ -51,6 +51,8 @@ func NewHandler() http.Handler {
     // Auth-protected like every other mutating endpoint.
     mux.HandleFunc("/sqlite", authMiddleware(sqliteSwapHandler))
     mux.HandleFunc("/captcha", authMiddleware(captchaHandler))
+    // Batch-mint device tokens from one browser harvest (Android app).
+    mux.HandleFunc("/admin/mint", authMiddleware(mintHandler))
 
     return corsMiddleware(mux)
 }
