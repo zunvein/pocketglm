@@ -58,8 +58,17 @@ Storm #3 lesson applies: never assume "fresh identity = immune" without testing.
 
 ## P3 — Kotlin shell (APK)
 
-- [ ] Minimal APK: Start/Stop button, foreground service, extract+exec the binary from assets,
-      status read from `/health` (breaker, pool size, standbyReady).
+- [x] **Minimal APK scaffold DONE 2026-11-10** (GHA `build-apk` green, artifact
+      `PocketGLM-debug-APK` ~8.7 MB incl. bundled bridge binary):
+      MainActivity (Start/Stop + /health status card) · BridgeService (foreground
+      service, extracts assets/bridge/zai-api-android-arm64 to filesDir, boot-guards
+      tokens.sqlite via framework SQLite) · TokenFarmActivity (WebView + injected
+      harvest JS port of harvest.go — the P1 experiment surface) · TokenStore
+      (inserts harvested tokens into the pool). CI lessons: plugin repos need
+      google() in settings.gradle.kts; `include(":app")` lives in settings; gradle
+      needs `android.useAndroidX=true`. Debug-signed for sideloading (release
+      signing = future, needs a keystore secret).
+- [ ] On-device test of the bundled APK (install → Start → /health → token farm → e2e).
 - [ ] WebView token farm: load chat.z.ai, inject the harvest JS (ported from
       `cmd/token-collector/harvest.go`), tokens → SQLite pool in `filesDir`.
 - [ ] In-app config: AUTH_TOKEN, .glmkey, ZAI_TOKENS (stored in EncryptedSharedPreferences
