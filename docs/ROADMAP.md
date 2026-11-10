@@ -19,12 +19,12 @@ The origin VPS expires **~1 week from 2026-11-10**. Priorities:
 
 ## P0 — Final backup (URGENT, while the origin VPS is alive)
 
-- [x] Repo `zunvein/glm` = `633abfc` pushed, secret-scan clean (verifikasi 2026-11-01).
+- [x] Repo `zunvein/glm` = `633abfc` pushed, secret-scan clean (verified 2026-11-01).
 - [x] Repo `zunvein/glmroid` created 2026-11-10; tree assembled from glm main + `go.mod`+`go.sum`
       (glm deliberately does not track go.mod; glmroid tracks it so GHA can build without the VPS).
 - [ ] Secrets handed over privately (never in the repo): bridge AUTH\_TOKEN, upstream Z.AI JWT(s).
       A phone only needs: AUTH\_TOKEN + at least one Z.AI JWT.
-- [ ] Opsional: note konfigurasi systemd unit (ZAI_TOKENS format, env knobs) → docs/konfig.md.
+- [ ] Optional: write the systemd unit config down (ZAI_TOKENS format, env knobs) → docs/config.md.
 
 ## P1 — Key experiment (GO/NO-GO gate for the phone architecture)
 
@@ -79,7 +79,7 @@ Storm #3 lesson applies: never assume "fresh identity = immune" without testing.
 - e2e SSE verdict valid cuma kalau tail mengandung `data: [DONE]` + zero error events;
   `curl -s` tanpa `-f` exit 0 walau HTTP error.
 - SQLite hot-swap harus ke filename unik per generasi (`tokens-live-<stamp>.sqlite`);
-  swap di path yang sama pada DB WAL = replay `-wal` stale (ghost rows).
+  swapping to the same path on a WAL db replays a stale `-wal` (ghost rows).
 - Jangan print nilai rahasia; mask by VALUE shape (JWT `eyJ…`, hex 32+, base64 panjang).
 - Pre-push secret scan: diff range `origin/main..HEAD`.
 - Breaker: 3 consecutive fail → open 90 s; standby swap = same-second recovery (proven drill).
