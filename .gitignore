@@ -24,3 +24,4 @@ app/build/
 app/local.properties
 *.jks
 *.keystore
+app/keystore/
