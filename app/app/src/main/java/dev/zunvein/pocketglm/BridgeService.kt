@@ -7,8 +7,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import java.io.File
 import java.io.FileOutputStream
 
@@ -36,9 +40,22 @@ class BridgeService : Service() {
         const val CHANNEL_ID = "pocketglm_bridge"
         const val BINARY_NAME = "zai-api-android-arm64"
         const val NOTIFICATION_ID = 1
+        const val ATTENTION_CHANNEL_ID = "pocketglm_attention"
+        const val ATTENTION_NOTIFICATION_ID = 2
+
+        /** How often the service looks at the pool (only while the bridge runs). */
+        private const val TICK_MS = 60_000L
+        /** The background farm tops up at or below this many tokens. */
+        private const val BG_LOW = 10
+        private const val WAKE_LOCK_MS = 6L * 60 * 60 * 1000
     }
 
     private var bridgeProcess: Process? = null
+    private val main = Handler(Looper.getMainLooper())
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var bgFarmer: Farmer? = null
+    private var ticking = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -46,12 +63,29 @@ class BridgeService : Service() {
         when (intent?.action) {
             ACTION_START, ACTION_RESTART -> startBridge()
             ACTION_STOP -> stopBridge()
+            // null intent = the system restarted us after killing the process.
+            null -> if (Prefs.bridgeWanted(this)) {
+                LogFile.append(this, "[app] service restarted by the system, starting the bridge again")
+                startBridge()
+            } else {
+                stopSelf()
+            }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startBridge() {
-        promoteToForeground()
+        Prefs.setBridgeWanted(this, true)
+        try {
+            promoteToForeground()
+        } catch (e: Exception) {
+            // Android refuses to start a foreground service from the background
+            // in some restart cases. Nothing to run without it.
+            LogFile.append(this, "[app] cannot enter foreground: ${e.javaClass.simpleName}: ${e.message}")
+            stopSelf()
+            return
+        }
+        acquireLocks()
 
         Thread {
             val workDir = File(filesDir, "bridge").apply { mkdirs() }
@@ -123,6 +157,7 @@ class BridgeService : Service() {
                 }
                 .start()
             appendLog(workDir, "[app] spawned OK from ${bin.parent} (accounts: ${AccountStore.list(this).count { !it.isExpired() }})")
+            main.post { startTicks() }
             true
         } catch (e: Exception) {
             appendLog(workDir, "[app] exec failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -185,10 +220,158 @@ class BridgeService : Service() {
     }
 
     private fun stopBridge() {
-        bridgeProcess?.destroy()
-        bridgeProcess = null
+        Prefs.setBridgeWanted(this, false)
+        shutDown()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun shutDown() {
+        main.post {
+            ticking = false
+            main.removeCallbacksAndMessages(null)
+            bgFarmer?.destroy()
+            bgFarmer = null
+        }
+        bridgeProcess?.destroy()
+        bridgeProcess = null
+        releaseLocks()
+    }
+
+    // ── keep running with the screen off ─────────────────────────────────
+
+    /**
+     * A partial wake lock keeps the CPU running, and a Wi-Fi lock keeps the
+     * radio from sleeping, so other devices on the LAN can still reach the
+     * bridge when the screen is off. Both are released on stop.
+     */
+    @Suppress("DEPRECATION")
+    private fun acquireLocks() {
+        if (!Prefs.keepAwake(this)) return
+        try {
+            if (wakeLock?.isHeld != true) {
+                val pm = getSystemService(PowerManager::class.java)
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pocketglm:bridge").apply {
+                    setReferenceCounted(false)
+                    // Safety net: never hold the CPU forever if the service is leaked.
+                    acquire(WAKE_LOCK_MS)
+                }
+            }
+            if (wifiLock?.isHeld != true) {
+                val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY else WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                wifiLock = wm.createWifiLock(mode, "pocketglm:bridge").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
+        } catch (e: Exception) {
+            LogFile.append(this, "[app] could not take wake/wifi lock: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    private fun releaseLocks() {
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (ignored: Exception) {}
+        try { if (wifiLock?.isHeld == true) wifiLock?.release() } catch (ignored: Exception) {}
+        wakeLock = null
+        wifiLock = null
+    }
+
+    // ── background farm (experimental) ───────────────────────────────────
+
+    private val tick = object : Runnable {
+        override fun run() {
+            if (!ticking) return
+            // Renew the wake lock before its safety timeout runs out.
+            acquireLocks()
+            if (Prefs.bgFarm(this@BridgeService)) {
+                Thread {
+                    val h = BridgeClient.health()
+                    main.post { onHealth(h) }
+                }.start()
+            }
+            main.postDelayed(this, TICK_MS)
+        }
+    }
+
+    private fun startTicks() {
+        if (ticking) return
+        ticking = true
+        main.postDelayed(tick, 20_000L)
+    }
+
+    private fun onHealth(h: BridgeClient.Health) {
+        if (!ticking || !Prefs.bgFarm(this)) return
+        if (!h.up || h.warming || h.tokens < 0 || h.tokens > BG_LOW) return
+        if (FarmState.running || bgFarmer != null || !FarmState.cooldownOk()) return
+        runBackgroundFarm()
+    }
+
+    private fun runBackgroundFarm() {
+        LogFile.append(this, "[farm-bg] pool is low, starting a hidden farm run")
+        val f = try {
+            Farmer(
+                this, Farmer.DEFAULT_MINT,
+                log = { m -> LogFile.append(this, "[farm-bg] $m") },
+                onDone = { ok, summary -> onBackgroundDone(ok, summary) },
+            )
+        } catch (e: Exception) {
+            // No WebView available in this context.
+            LogFile.append(this, "[farm-bg] cannot create a WebView here: ${e.javaClass.simpleName}: ${e.message}")
+            FarmState.lastOk = false
+            FarmState.lastFinishedAt = System.currentTimeMillis()
+            Prefs.setBgStatus(this, "Could not start: no WebView in the service")
+            return
+        }
+        bgFarmer = f
+        try {
+            f.layoutOffscreen()
+            f.start()
+        } catch (e: Exception) {
+            LogFile.append(this, "[farm-bg] start failed: ${e.javaClass.simpleName}: ${e.message}")
+            onBackgroundDone(false, "start failed")
+        }
+    }
+
+    private fun onBackgroundDone(ok: Boolean, summary: String) {
+        bgFarmer?.let { f -> main.post { f.destroy() } }
+        bgFarmer = null
+        val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        Prefs.setBgStatus(this, (if (ok) "OK " else "Failed ") + time + ": " + summary)
+        if (ok) {
+            FarmState.bgFailStreak = 0
+        } else {
+            FarmState.bgFailStreak++
+            if (FarmState.bgFailStreak == 2) notifyAttention()
+        }
+        refreshNotification()
+    }
+
+    /** Two hidden runs failed in a row: the visible farm is the proven path. */
+    private fun notifyAttention() {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(ATTENTION_CHANNEL_ID, "PocketGLM alerts", NotificationManager.IMPORTANCE_DEFAULT)
+        )
+        val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        nm.notify(
+            ATTENTION_NOTIFICATION_ID,
+            Notification.Builder(this, ATTENTION_CHANNEL_ID)
+                .setContentTitle("Background farm is not working")
+                .setContentText("Open the app and run the token farm by hand.")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .build()
+        )
+    }
+
+    private fun refreshNotification() {
+        try {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        } catch (ignored: Exception) {
+        }
     }
 
     /**
@@ -235,20 +418,7 @@ class BridgeService : Service() {
         }
         nm.createNotificationChannel(channel)
 
-        val openIntent = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification: Notification =
-            Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("PocketGLM")
-                .setContentText("Bridge running on :3001")
-                .setSmallIcon(android.R.drawable.ic_menu_manage)
-                .setOngoing(true)
-                .setContentIntent(openIntent)
-                .build()
+        val notification = buildNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -257,9 +427,26 @@ class BridgeService : Service() {
         }
     }
 
+    private fun buildNotification(): Notification {
+        val openIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val status = Prefs.bgStatus(this)
+        val text = if (Prefs.bgFarm(this) && status.isNotEmpty()) "Bridge on :3001 | farm: $status" else "Bridge running on :3001"
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("PocketGLM")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_manage)
+            .setOngoing(true)
+            .setContentIntent(openIntent)
+            .build()
+    }
+
     override fun onDestroy() {
-        bridgeProcess?.destroy()
-        bridgeProcess = null
+        // Not through stopBridge(): "wanted" must survive so a system restart can bring the bridge back.
+        shutDown()
         super.onDestroy()
     }
 }

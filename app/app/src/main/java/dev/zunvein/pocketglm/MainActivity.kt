@@ -2,16 +2,18 @@ package dev.zunvein.pocketglm
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.ServiceConnection
-import android.os.Bundle
-import android.os.IBinder
-import android.graphics.Typeface
 import android.net.ConnectivityManager
-import android.widget.Button
+import android.net.Uri
+import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import android.text.InputType
+import android.view.Gravity
+import android.view.View
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -19,175 +21,372 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.*
-import org.json.JSONObject
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * Single-screen control panel for the PocketGLM bridge.
- *
- *  - START/STOP toggles the foreground service that owns the Go process.
- *  - A status card polls the bridge's /health endpoint every 2 s while the
- *    process is up (breaker state, pool size, standby readiness).
- *  - "Open token farm" launches the WebView harvester activity (P1).
- *
- * Deliberately plain programmatic UI — no XML layouts — to keep the shell thin.
+ * Four tabs over plain views (no Compose, no Material): Home (bridge + token
+ * supply), API (endpoint + key), Accounts, Logs. Colors come from the
+ * day/night resources, so dark mode follows the system.
  */
 class MainActivity : AppCompatActivity() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var bridgeAlive = false
     private var pollJob: Job? = null
     private var resumed = false
-    // Written on the IO thread by renderHealth, read on the main thread.
-    @Volatile private var lastTokenCount = -1
+    private var health = BridgeClient.DOWN
+    private var startingUntil = 0L
     private var lastTopUpAt = 0L
-    private lateinit var autoSwitch: android.widget.Switch
+    private var tab = 0
+    private var keyShown = false
 
-    companion object {
-        private const val PREF_AUTO_TOPUP = "auto_topup"
-        private const val LOW_POOL = 3
-    }
+    private lateinit var pages: List<View>
+    private lateinit var tabLabels: List<TextView>
 
-    private lateinit var toggleButton: Button
-    private lateinit var farmButton: Button
-    private lateinit var copyButton: Button
-    private lateinit var statusText: TextView
-    private lateinit var keyText: TextView
+    // Home
+    private lateinit var statusPill: TextView
+    private lateinit var toggleButton: android.widget.Button
+    private lateinit var hintText: TextView
+    private lateinit var tokensValue: TextView
+    private lateinit var okValue: TextView
+    private lateinit var failValue: TextView
+    private lateinit var breakerValue: TextView
+    private lateinit var poolAgeValue: TextView
+    private lateinit var bgStatusText: TextView
+    private lateinit var batteryText: TextView
+    private lateinit var batteryButton: android.widget.Button
+
+    // API
     private lateinit var endpointText: TextView
+    private lateinit var keyText: TextView
     private lateinit var curlText: TextView
     private lateinit var testResult: TextView
+    private lateinit var showKeyButton: android.widget.Button
+
+    // Accounts
+    private lateinit var accountList: LinearLayout
+    private lateinit var applyButton: android.widget.Button
+
+    // Logs
+    private lateinit var logText: TextView
+    private lateinit var logsScroll: ScrollView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        toggleButton = Button(this).apply { text = "▶ START bridge" }
-        farmButton = Button(this).apply { text = "🌾 Open token farm" }
-        copyButton = Button(this).apply { text = "📋 Copy all logs" }
-        val accountsButton = Button(this).apply { text = "Accounts" }
-        statusText = TextView(this).apply {
-            setTextIsSelectable(true)
-            setPadding(48, 24, 48, 24)
-            text = "Bridge: stopped"
-        }
+        pages = listOf(buildHome(), buildApi(), buildAccounts(), buildLogs())
+        val content = FrameLayout(this).apply { pages.forEach { addView(it) } }
 
-        val dp = resources.displayMetrics.density
-        fun heading(t: String) = TextView(this).apply {
-            text = t
-            textSize = 16f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, (16 * dp).toInt(), 0, (4 * dp).toInt())
-        }
-        fun mono(selectable: Boolean = true) = TextView(this).apply {
-            typeface = Typeface.MONOSPACE
-            textSize = 12f
-            setTextIsSelectable(selectable)
-        }
-
-        endpointText = mono()
-        keyText = mono()
-        curlText = mono()
-        testResult = mono().apply { text = "" }
-
-        autoSwitch = android.widget.Switch(this).apply {
-            text = "Auto top-up when tokens run low"
-            isChecked = prefs().getBoolean(PREF_AUTO_TOPUP, true)
-            setOnCheckedChangeListener { _, on ->
-                prefs().edit().putBoolean(PREF_AUTO_TOPUP, on).apply()
+        val names = listOf("Home", "API", "Accounts", "Logs")
+        tabLabels = names.mapIndexed { i, n ->
+            Ui.text(this, n, 13f, R.color.textDim, true).apply {
+                gravity = Gravity.CENTER
+                minimumHeight = Ui.dp(this@MainActivity, 56)
+                setOnClickListener { selectTab(i) }
             }
         }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Ui.color(this@MainActivity, R.color.surface))
+            tabLabels.forEach { addView(it, LinearLayout.LayoutParams(0, Ui.WRAP, 1f)) }
+        }
+        val divider = View(this).apply { setBackgroundColor(Ui.color(this@MainActivity, R.color.stroke)) }
 
-        val copyKeyButton = Button(this).apply { text = "Copy key" }
-        val newKeyButton = Button(this).apply { text = "Generate new key" }
-        val customKeyButton = Button(this).apply { text = "Set custom key" }
-        val copyCurlButton = Button(this).apply { text = "Copy curl" }
-        val testButton = Button(this).apply { text = "Test endpoint" }
-
-        val content = LinearLayout(this).apply {
+        setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val pad = (16 * dp).toInt()
-            setPadding(pad, pad, pad, pad)
-            addView(toggleButton)
-            addView(farmButton)
-            addView(autoSwitch)
-            addView(accountsButton)
-            addView(copyButton)
-            addView(statusText)
+            addView(content, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
+            addView(divider, LinearLayout.LayoutParams(Ui.MATCH, Ui.dp(this@MainActivity, 1)))
+            addView(bar, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
+        })
 
-            addView(heading("API access"))
+        selectTab(0)
+        renderApi()
+        renderAccounts()
+        renderHome()
+    }
+
+    private fun selectTab(i: Int) {
+        tab = i
+        pages.forEachIndexed { idx, v -> v.visibility = if (idx == i) View.VISIBLE else View.GONE }
+        tabLabels.forEachIndexed { idx, t ->
+            t.setTextColor(Ui.color(this, if (idx == i) R.color.accent else R.color.textDim))
+        }
+        if (i == 2) renderAccounts()
+        if (i == 3) refreshLogs()
+    }
+
+    private fun page(vararg views: View): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val p = Ui.dp(this@MainActivity, 16)
+            setPadding(p, p, p, p)
+        }
+        views.forEach {
+            col.addView(it, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
+        }
+        return ScrollView(this).apply { addView(col) }
+    }
+
+    private fun row(vararg views: Pair<View, Float>): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        views.forEach { (v, w) ->
+            addView(v, if (w > 0f) LinearLayout.LayoutParams(0, Ui.WRAP, w) else LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP))
+        }
+    }
+
+    private fun buttonRow(vararg buttons: android.widget.Button): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        val gap = Ui.dp(this@MainActivity, 8)
+        buttons.forEachIndexed { i, b ->
+            addView(b, LinearLayout.LayoutParams(0, Ui.WRAP, 1f).apply { if (i > 0) marginStart = gap })
+        }
+    }
+
+    // ── Home ─────────────────────────────────────────────────────────────
+
+    private fun buildHome(): View {
+        statusPill = Ui.pill(this, "Stopped", R.color.textDim)
+        toggleButton = Ui.button(this, "Start bridge", Ui.Kind.PRIMARY).apply { setOnClickListener { toggleBridge() } }
+        hintText = Ui.text(this, "", 13f, R.color.textDim)
+
+        val (tokensRow, tv) = Ui.statRow(this, "Device tokens"); tokensValue = tv
+        val (okRow, ov) = Ui.statRow(this, "Chats answered"); okValue = ov
+        val (failRow, fv) = Ui.statRow(this, "Chats failed"); failValue = fv
+        val (breakerRow, bv) = Ui.statRow(this, "Breaker"); breakerValue = bv
+        val (ageRow, av) = Ui.statRow(this, "Pool age"); poolAgeValue = av
+
+        val bridgeCard = Ui.card(this).apply {
+            addView(row(Ui.text(this@MainActivity, "Bridge", 18f, R.color.text, true) to 1f, statusPill to 0f))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(tokensRow); addView(okRow); addView(failRow); addView(breakerRow); addView(ageRow)
+            addView(hintText)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(toggleButton)
+        }
+
+        val farmNow = Ui.button(this, "Farm tokens now", Ui.Kind.TONAL).apply {
+            setOnClickListener { startActivity(Intent(this@MainActivity, TokenFarmActivity::class.java)) }
+        }
+        val (autoRow, _) = Ui.switchRow(
+            this, "Auto top-up",
+            "Opens the farm by itself when tokens run low, while this app is open.",
+            Prefs.autoTopUp(this)
+        ) { Prefs.setAutoTopUp(this, it) }
+        val (bgRow, _) = Ui.switchRow(
+            this, "Background farm (experimental)",
+            "Farms with a hidden browser while the bridge runs, even with the app closed. May not work on every phone.",
+            Prefs.bgFarm(this)
+        ) {
+            Prefs.setBgFarm(this, it)
+            FarmState.bgFailStreak = 0
+            renderHome()
+        }
+        bgStatusText = Ui.text(this, "", 13f, R.color.textDim)
+
+        val farmCard = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Token supply", 18f, R.color.text, true))
+            addView(Ui.text(this@MainActivity, "Every chat uses one device token. One farm run adds about ${Farmer.DEFAULT_MINT + 1}.", 13f, R.color.textDim))
+            addView(Ui.gap(this@MainActivity, 12))
+            addView(farmNow)
+            addView(autoRow)
+            addView(bgRow)
+            addView(bgStatusText)
+        }
+
+        val (awakeRow, _) = Ui.switchRow(
+            this, "Keep CPU and Wi-Fi awake",
+            "Holds a wake lock while the bridge runs, so other devices can reach it with the screen off.",
+            Prefs.keepAwake(this)
+        ) { on ->
+            Prefs.setKeepAwake(this, on)
+            if (health.up) Toast.makeText(this, "Applies the next time the bridge starts", Toast.LENGTH_SHORT).show()
+        }
+        batteryText = Ui.text(this, "", 13f, R.color.textDim)
+        batteryButton = Ui.button(this, "Allow unrestricted battery", Ui.Kind.TONAL).apply {
+            setOnClickListener { requestBatteryExemption() }
+        }
+        val keepCard = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Keep running", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 4))
+            addView(awakeRow)
+            addView(batteryText)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(batteryButton)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(Ui.text(this@MainActivity, "Xiaomi, Oppo, Vivo, Huawei and Samsung phones also have their own autostart or battery list. If the bridge still gets killed, allow PocketGLM there.", 12f, R.color.textDim))
+        }
+        return page(bridgeCard, farmCard, keepCard)
+    }
+
+    private fun isUp() = health.up
+    private fun isStarting() = !health.up && System.currentTimeMillis() < startingUntil
+
+    private fun renderHome() {
+        val h = health
+        when {
+            h.up && !h.warming -> statusPill.setPill("Running", R.color.good)
+            h.up -> statusPill.setPill("Warming up", R.color.warn)
+            isStarting() -> statusPill.setPill("Starting", R.color.warn)
+            else -> statusPill.setPill("Stopped", R.color.textDim)
+        }
+        val running = h.up || isStarting()
+        toggleButton.text = if (running) "Stop bridge" else "Start bridge"
+        toggleButton.style(if (running) Ui.Kind.DANGER else Ui.Kind.PRIMARY)
+
+        tokensValue.text = if (h.up && h.tokens >= 0) h.tokens.toString() else "-"
+        tokensValue.setTextColor(Ui.color(this, if (h.up && h.tokens in 0..3) R.color.warn else R.color.text))
+        okValue.text = if (h.up) h.computeOk.toString() else "-"
+        failValue.text = if (h.up) h.computeFail.toString() else "-"
+        breakerValue.text = if (h.up && h.breaker.isNotEmpty()) h.breaker else "-"
+        poolAgeValue.text = if (h.up && h.poolAgeSec >= 0) formatAge(h.poolAgeSec) else "-"
+        hintText.text = when {
+            h.up && h.tokens == 0 -> "The pool is empty. Chats fail until you farm tokens."
+            h.up && h.warming -> "The bridge is up and still setting up its Z.AI session."
+            isStarting() -> "Starting the bridge..."
+            !h.up && h.error != null && startingUntil != 0L -> "No answer yet. The Logs tab shows what the bridge says."
+            else -> ""
+        }
+        hintText.visibility = if (hintText.text.isEmpty()) View.GONE else View.VISIBLE
+
+        val bg = Prefs.bgStatus(this)
+        bgStatusText.text = if (Prefs.bgFarm(this)) {
+            "Background farm: " + (bg.ifEmpty { "waiting for the pool to run low" })
+        } else ""
+        bgStatusText.visibility = if (bgStatusText.text.isEmpty()) View.GONE else View.VISIBLE
+
+        val ignoring = batteryExempt()
+        batteryText.text = if (ignoring) "Battery: unrestricted for PocketGLM." else "Battery: Android may stop the bridge when the screen is off."
+        batteryButton.visibility = if (ignoring) View.GONE else View.VISIBLE
+        applyButton.visibility = if (isUp()) View.VISIBLE else View.GONE
+    }
+
+    private fun formatAge(sec: Long): String = when {
+        sec < 90 -> "${sec}s"
+        sec < 5400 -> "${sec / 60}m"
+        else -> "${sec / 3600}h ${(sec % 3600) / 60}m"
+    }
+
+    private fun batteryExempt(): Boolean =
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    private fun requestBatteryExemption() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName"))
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (e2: Exception) {
+                Toast.makeText(this, "Open Settings > Apps > PocketGLM > Battery and choose Unrestricted", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun toggleBridge() {
+        if (isUp() || isStarting()) {
+            startService(Intent(this, BridgeService::class.java).apply { action = BridgeService.ACTION_STOP })
+            startingUntil = 0L
+            health = BridgeClient.DOWN
+        } else {
+            startForegroundService(Intent(this, BridgeService::class.java).apply { action = BridgeService.ACTION_START })
+            startingUntil = System.currentTimeMillis() + 20_000L
+        }
+        renderHome()
+    }
+
+    private fun restartBridge() {
+        startForegroundService(Intent(this, BridgeService::class.java).apply { action = BridgeService.ACTION_RESTART })
+        startingUntil = System.currentTimeMillis() + 20_000L
+        health = BridgeClient.DOWN
+        renderHome()
+    }
+
+    // ── API ──────────────────────────────────────────────────────────────
+
+    private fun buildApi(): View {
+        endpointText = Ui.mono2(this)
+        keyText = Ui.mono2(this)
+        curlText = Ui.mono2(this)
+        testResult = Ui.mono2(this).apply { visibility = View.GONE }
+
+        showKeyButton = Ui.button(this, "Show", Ui.Kind.TONAL).apply {
+            setOnClickListener { keyShown = !keyShown; renderApi() }
+        }
+        val copyKey = Ui.button(this, "Copy key", Ui.Kind.TONAL).apply {
+            setOnClickListener { copyText("pocketglm-key", ApiKeyStore.get(this@MainActivity), "Key copied") }
+        }
+        val newKey = Ui.button(this, "New key", Ui.Kind.TONAL).apply { setOnClickListener { confirmRegenerate() } }
+        val customKey = Ui.button(this, "Custom", Ui.Kind.TONAL).apply { setOnClickListener { promptCustomKey() } }
+        val copyCurl = Ui.button(this, "Copy curl", Ui.Kind.TONAL).apply {
+            setOnClickListener { copyText("pocketglm-curl", curlText(ApiKeyStore.get(this@MainActivity)), "curl copied") }
+        }
+        val test = Ui.button(this, "Test endpoint", Ui.Kind.PRIMARY).apply { setOnClickListener { testEndpoint() } }
+
+        val endpoints = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Endpoints", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 8))
             addView(endpointText)
-            addView(heading("API key"))
+        }
+        val keyCard = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "API key", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 8))
             addView(keyText)
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                addView(copyKeyButton, lp)
-                addView(newKeyButton, lp)
-                addView(customKeyButton, lp)
-            })
-            addView(heading("Example request"))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(buttonRow(showKeyButton, copyKey))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(buttonRow(newKey, customKey))
+        }
+        val example = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Example request", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 8))
             addView(curlText)
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                addView(copyCurlButton, lp)
-                addView(testButton, lp)
-            })
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(buttonRow(copyCurl, test))
+            addView(Ui.gap(this@MainActivity, 8))
             addView(testResult)
         }
-        setContentView(ScrollView(this).apply { addView(content) })
-
-        refreshApiCard()
-        copyKeyButton.setOnClickListener { copyText("pocketglm-key", ApiKeyStore.get(this), "Key copied") }
-        copyCurlButton.setOnClickListener { copyText("pocketglm-curl", curlText.text.toString(), "curl copied") }
-        newKeyButton.setOnClickListener { confirmRegenerate() }
-        customKeyButton.setOnClickListener { promptCustomKey() }
-        testButton.setOnClickListener { testEndpoint() }
-
-        toggleButton.setOnClickListener { toggleBridge() }
-        farmButton.setOnClickListener {
-            startActivity(Intent(this, TokenFarmActivity::class.java))
-        }
-        copyButton.setOnClickListener { copyAllLogs() }
-        accountsButton.setOnClickListener { startActivity(Intent(this, AccountsActivity::class.java)) }
+        return page(endpoints, keyCard, example)
     }
-
-    // ── API access card ──────────────────────────────────────────────────
 
     /** First non-loopback IPv4 address of the active network (Wi-Fi LAN IP). */
-    private fun lanIp(): String? {
-        return try {
-            val cm = getSystemService(ConnectivityManager::class.java)
-            val link = cm.getLinkProperties(cm.activeNetwork)
-            link?.linkAddresses
-                ?.map { it.address }
-                ?.firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress }
-                ?.hostAddress
-        } catch (e: Exception) {
-            null
-        }
+    private fun lanIp(): String? = try {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        cm.getLinkProperties(cm.activeNetwork)?.linkAddresses
+            ?.map { it.address }
+            ?.firstOrNull { it is java.net.Inet4Address && !it.isLoopbackAddress }
+            ?.hostAddress
+    } catch (e: Exception) {
+        null
     }
 
-    private fun refreshApiCard() {
+    private fun curlText(key: String): String {
+        val lan = lanIp() ?: "<phone-ip>"
+        return "curl http://$lan:3001/v1/chat/completions \\\n" +
+            "  -H \"Authorization: Bearer $key\" \\\n" +
+            "  -H \"Content-Type: application/json\" \\\n" +
+            "  -d '{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+    }
+
+    private fun renderApi() {
         val key = ApiKeyStore.get(this)
         val ip = lanIp()
         val lan = ip ?: "<phone-ip>"
         endpointText.text = buildString {
-            append("This phone (apps on the same device):\n")
+            append("This phone:\n")
             append("  OpenAI    http://127.0.0.1:3001/v1\n")
             append("  Anthropic http://127.0.0.1:3001\n\n")
-            append("Other devices on the same Wi-Fi:\n")
+            append("Same Wi-Fi:\n")
             append("  OpenAI    http://$lan:3001/v1\n")
-            append("  Anthropic http://$lan:3001\n")
-            if (ip == null) append("  (no Wi-Fi address found — connect to Wi-Fi first)\n")
-            append("\nPaths: /v1/chat/completions, /v1/messages, /v1/models")
+            append("  Anthropic http://$lan:3001")
+            if (ip == null) append("\n  (no Wi-Fi address found, connect to Wi-Fi first)")
         }
-        keyText.text = key
-        curlText.text = "curl http://$lan:3001/v1/chat/completions \\\n" +
-            "  -H \"Authorization: Bearer $key\" \\\n" +
-            "  -H \"Content-Type: application/json\" \\\n" +
-            "  -d '{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
+        keyText.text = if (keyShown) key else AccountStore.mask(key)
+        showKeyButton.text = if (keyShown) "Hide" else "Show"
+        curlText.text = curlText(if (keyShown) key else AccountStore.mask(key))
     }
 
     private fun copyText(label: String, text: String, toast: String) {
@@ -198,13 +397,10 @@ class MainActivity : AppCompatActivity() {
 
     /** A running bridge only reads AUTH_TOKEN at start, so it must restart. */
     private fun applyKeyChange() {
-        refreshApiCard()
-        if (bridgeAlive) {
-            startForegroundService(Intent(this, BridgeService::class.java).apply {
-                action = BridgeService.ACTION_RESTART
-            })
-            setBridgeState(true, delay = true)
-            Toast.makeText(this, "Key changed — restarting bridge", Toast.LENGTH_SHORT).show()
+        renderApi()
+        if (isUp() || isStarting()) {
+            restartBridge()
+            Toast.makeText(this, "Key changed, restarting the bridge", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "Key changed", Toast.LENGTH_SHORT).show()
         }
@@ -212,231 +408,223 @@ class MainActivity : AppCompatActivity() {
 
     private fun confirmRegenerate() {
         AlertDialog.Builder(this)
-            .setTitle("Generate new key?")
-            .setMessage("The old key stops working immediately" +
-                if (bridgeAlive) " and the bridge restarts." else ".")
-            .setPositiveButton("Generate") { _, _ ->
-                ApiKeyStore.regenerate(this)
-                applyKeyChange()
-            }
+            .setTitle("Generate a new key?")
+            .setMessage("The old key stops working right away" + if (isUp()) " and the bridge restarts." else ".")
+            .setPositiveButton("Generate") { _, _ -> ApiKeyStore.regenerate(this); applyKeyChange() }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
     private fun promptCustomKey() {
         val input = EditText(this).apply {
-            hint = "8–128 chars, no spaces or commas"
+            hint = "8 to 128 characters, no spaces or commas"
             setText(ApiKeyStore.get(this@MainActivity))
         }
         AlertDialog.Builder(this)
-            .setTitle("Set custom key")
+            .setTitle("Set a custom key")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
-                if (ApiKeyStore.set(this, input.text.toString())) {
-                    applyKeyChange()
-                } else {
-                    Toast.makeText(this, "Invalid key (8–128 chars, no spaces or commas)", Toast.LENGTH_LONG).show()
-                }
+                if (ApiKeyStore.set(this, input.text.toString())) applyKeyChange()
+                else Toast.makeText(this, "Invalid key: 8 to 128 characters, no spaces or commas", Toast.LENGTH_LONG).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    /** GET /v1/models with the current key — proves auth + routing work. */
     private fun testEndpoint() {
-        testResult.text = "Testing…"
+        testResult.visibility = View.VISIBLE
+        testResult.text = "Testing..."
         val key = ApiKeyStore.get(this)
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    val conn = URL("http://127.0.0.1:3001/v1/models")
-                        .openConnection(java.net.Proxy.NO_PROXY) as HttpURLConnection
-                    conn.connectTimeout = 2000
-                    conn.readTimeout = 20000
-                    conn.setRequestProperty("Authorization", "Bearer $key")
-                    val code = conn.responseCode
-                    val stream = if (code >= 400) conn.errorStream else conn.inputStream
-                    val body = stream?.bufferedReader()?.readText().orEmpty()
-                    conn.disconnect()
-                    "HTTP $code\n" + body.take(400)
-                } catch (e: Exception) {
-                    "Failed: ${e.javaClass.simpleName}: ${e.message}\n(is the bridge started?)"
+            val result = withContext(Dispatchers.IO) { BridgeClient.testModels(key) }
+            testResult.text = Redact.text(this@MainActivity, result)
+        }
+    }
+
+    // ── Accounts ─────────────────────────────────────────────────────────
+
+    private fun buildAccounts(): View {
+        accountList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val signIn = Ui.button(this, "Sign in with Z.AI", Ui.Kind.PRIMARY).apply {
+            setOnClickListener { startActivityForResult(Intent(this@MainActivity, AccountLoginActivity::class.java), REQ_LOGIN) }
+        }
+        val paste = Ui.button(this, "Paste token", Ui.Kind.TONAL).apply { setOnClickListener { promptPaste() } }
+        applyButton = Ui.button(this, "Apply now (restart bridge)", Ui.Kind.TONAL).apply { setOnClickListener { restartBridge() } }
+
+        val info = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Accounts", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 4))
+            addView(Ui.text(
+                this@MainActivity,
+                "Without an account the bridge uses a guest identity that only reaches the flash models. " +
+                    "Signed-in accounts are rotated per request. Changes apply when the bridge starts.",
+                13f, R.color.textDim
+            ))
+        }
+        val list = Ui.card(this).apply { addView(accountList) }
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(buttonRow(signIn, paste))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(applyButton)
+        }
+        return page(info, list, actions)
+    }
+
+    private fun renderAccounts() {
+        accountList.removeAllViews()
+        val accounts = AccountStore.list(this)
+        if (accounts.isEmpty()) {
+            accountList.addView(Ui.text(this, "No accounts saved. The bridge runs as a guest.", 14f, R.color.textDim))
+            return
+        }
+        val fmt = SimpleDateFormat("d MMM yyyy HH:mm", Locale.getDefault())
+        accounts.forEachIndexed { i, a ->
+            if (i > 0) accountList.addView(Ui.gap(this, 12))
+            val exp = a.expiresAtSec?.let {
+                if (a.isExpired()) "expired" else "expires " + fmt.format(Date(it * 1000))
+            } ?: "no expiry"
+            val pill = if (a.isExpired()) Ui.pill(this, "Expired", R.color.bad) else Ui.pill(this, "Active", R.color.good)
+            accountList.addView(row(Ui.text(this, a.hint, 15f, R.color.text, true) to 1f, pill to 0f))
+            accountList.addView(Ui.mono(this).apply { text = "${a.masked()}\n$exp"; setTextIsSelectable(false) })
+            accountList.addView(Ui.button(this, "Remove", Ui.Kind.TEXT).apply {
+                setOnClickListener { confirmRemove(a) }
+            })
+        }
+    }
+
+    private fun confirmRemove(a: AccountStore.Account) {
+        AlertDialog.Builder(this)
+            .setTitle("Remove this account?")
+            .setMessage("${a.hint} will be deleted from this phone.")
+            .setPositiveButton("Remove") { _, _ -> AccountStore.remove(this, a.id); renderAccounts() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptPaste() {
+        val input = EditText(this).apply {
+            hint = "eyJ..."
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 3
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Paste a Z.AI token")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val msg = when (val r = AccountStore.add(this, input.text.toString())) {
+                    is AccountStore.AddResult.Added -> "Account saved (${r.account.hint})"
+                    AccountStore.AddResult.Duplicate -> "That account is already saved"
+                    AccountStore.AddResult.Guest -> "That is a guest token, not a signed-in account."
+                    is AccountStore.AddResult.Invalid -> r.reason
+                    is AccountStore.AddResult.StorageError -> "Could not store the token securely: ${r.reason}"
                 }
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                renderAccounts()
             }
-            testResult.text = result
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_LOGIN) renderAccounts()
+    }
+
+    // ── Logs ─────────────────────────────────────────────────────────────
+
+    private fun buildLogs(): View {
+        logText = Ui.mono(this).apply {
+            val p = Ui.dp(this@MainActivity, 12)
+            setPadding(p, p, p, p)
+            background = Ui.shape(Ui.color(this@MainActivity, R.color.surfaceAlt), Ui.dp(this@MainActivity, 10).toFloat())
+            textSize = 11f
+        }
+        val copy = Ui.button(this, "Copy all logs", Ui.Kind.PRIMARY).apply {
+            setOnClickListener {
+                val full = LogFile.file(this@MainActivity).let { if (it.exists()) it.readText() else "(no bridge.log yet)" }
+                val header = "healthy=${health.healthy} tokens=${health.tokens} ok=${health.computeOk} fail=${health.computeFail} breaker=${health.breaker}\n\n"
+                copyText("pocketglm-logs", Redact.text(this@MainActivity, header + full), "Logs copied, secrets hidden")
+            }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val p = Ui.dp(this@MainActivity, 16)
+            setPadding(p, p, p, p)
+            addView(copy, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
+            addView(logText)
+        }
+        logsScroll = ScrollView(this).apply { addView(col) }
+        return logsScroll
+    }
+
+    private fun refreshLogs() {
+        val tail = LogFile.tail(this, 12_000)
+        val shown = Redact.text(this, tail).ifEmpty { "(bridge.log is empty or does not exist yet)" }
+        if (logText.text.toString() != shown) {
+            val atEnd = !logsScroll.canScrollVertically(1)
+            logText.text = shown
+            if (atEnd) logsScroll.post { logsScroll.fullScroll(View.FOCUS_DOWN) }
         }
     }
 
-    /**
-     * One-tap bug report: current status card + the FULL bridge.log into the
-     * clipboard, so a failure can be pasted straight into a chat without
-     * fighting with text selection inside the ScrollView.
-     */
-    private fun copyAllLogs() {
-        val sb = StringBuilder()
-        sb.append(statusText.text)
-        val log = File(filesDir, "bridge/bridge.log")
-        if (log.exists()) {
-            sb.append("\n\n—— bridge.log (full) ——\n").append(log.readText())
-        } else {
-            sb.append("\n\n(bridge.log does not exist yet)")
-        }
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("pocketglm-logs", redact(sb.toString())))
-        copyButton.text = "✓ Copied to clipboard"
-        copyButton.postDelayed({ copyButton.text = "📋 Copy all logs" }, 2000)
-    }
+    // ── polling + auto top-up ────────────────────────────────────────────
 
-    /**
-     * Logs get pasted into chats and issues. Hide anything shaped like a
-     * credential: the app's own sk-pgl- keys, the user's saved API key (which
-     * may be custom), and JWT-shaped account tokens.
-     */
-    private fun redact(text: String): String {
-        var out = text
-        val key = ApiKeyStore.get(this)
-        if (key.length >= 8) out = out.replace(key, AccountStore.mask(key))
-        out = Regex("sk-pgl-[A-Za-z0-9]{8,}").replace(out) { AccountStore.mask(it.value) }
-        out = Regex("eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+").replace(out) { AccountStore.mask(it.value) }
-        return out
-    }
-
-    private fun toggleBridge() {
-        if (bridgeAlive) {
-            startService(Intent(this, BridgeService::class.java).apply {
-                action = BridgeService.ACTION_STOP
-            })
-            setBridgeState(false)
-        } else {
-            startForegroundService(Intent(this, BridgeService::class.java).apply {
-                action = BridgeService.ACTION_START
-            })
-            // give the process a moment before the first poll
-            setBridgeState(true, delay = true)
-        }
-    }
-
-    private fun setBridgeState(alive: Boolean, delay: Boolean = false) {
-        bridgeAlive = alive
-        toggleButton.text = if (alive) "■ STOP bridge" else "▶ START bridge"
-        if (alive) {
-            startPolling(delay)
-        } else {
-            pollJob?.cancel()
-            statusText.text = "Bridge: stopped"
-        }
-    }
-
-    private fun startPolling(initialDelay: Boolean) {
+    private fun startPolling() {
         pollJob?.cancel()
         pollJob = scope.launch {
-            if (initialDelay) delay(2500)
             while (isActive) {
-                val status = withContext(Dispatchers.IO) { fetchHealth() }
-                statusText.text = status
+                val h = withContext(Dispatchers.IO) { BridgeClient.health() }
+                health = h
+                renderHome()
+                if (tab == 3) refreshLogs()
                 maybeTopUp()
                 delay(2000)
             }
         }
     }
 
-    /** Fetch GET /health from the local bridge and render a compact summary. */
-    private fun fetchHealth(): String {
-        val health = try {
-            val conn = java.net.Proxy.NO_PROXY.let { urlProxied ->
-                URL("http://127.0.0.1:3001/health").openConnection(urlProxied) as HttpURLConnection
-            }
-            conn.connectTimeout = 1500
-            conn.readTimeout = 1500
-            conn.requestMethod = "GET"
-            // Read the body even for non-2xx: the bridge answers /health with
-            // 503 while its Z.AI session is still initializing (DNS/warmup),
-            // and that JSON is exactly what the status card should render
-            // instead of a misleading "FileNotFoundException".
-            val body = try {
-                conn.inputStream.bufferedReader().readText()
-            } catch (e: Exception) {
-                conn.errorStream?.bufferedReader()?.readText()
-                    ?: throw e
-            }
-            val code = conn.responseCode
-            conn.disconnect()
-            renderHealth(body, code)
-        } catch (e: Exception) {
-            lastTokenCount = -1
-            "Bridge: starting… (no response yet)\n${e.javaClass.simpleName}: ${e.message}"
-        }
-        // Append the tail of bridge.log when the bridge is not up yet —
-        // this surfaces extraction/exec failures that never reach /health.
-        if (!health.startsWith("Bridge: UP")) {
-            val log = File(filesDir, "bridge/bridge.log")
-            if (log.exists()) {
-                val tail = log.readText().lines().takeLast(8).joinToString("\n")
-                return health + "\n\n—— bridge.log tail ——\n" + tail
-            }
-        }
-        return health
-    }
-
-    private fun renderHealth(body: String, code: Int = 200): String {
-        return try {
-            val o = JSONObject(body)
-            val captcha = o.optJSONObject("captcha")
-            val sb = StringBuilder(if (code == 200) "Bridge: UP\n" else "Bridge: UP (warming up, HTTP $code)\n")
-            sb.append("healthy: ").append(o.optBoolean("healthy")).append('\n')
-            lastTokenCount = o.optInt("tokenCount", -1)
-            sb.append("tokens: ").append(lastTokenCount).append('\n')
-            if (captcha != null) {
-                sb.append("breaker: ").append(captcha.optString("breaker")).append('\n')
-                sb.append("computeOK: ").append(captcha.optLong("computeOK", 0)).append('\n')
-                sb.append("computeFail: ").append(captcha.optLong("computeFail", 0)).append('\n')
-                sb.append("standbyReady: ").append(captcha.optBoolean("standbyReady")).append('\n')
-                sb.append("poolAgeSec: ").append(captcha.optLong("poolAgeSec", -1)).append('\n')
-            }
-            sb.toString()
-        } catch (e: Exception) {
-            "Bridge: UP (unparsed)\n$body"
-        }
-    }
-
-    override fun onPause() {
-        resumed = false
-        super.onPause()
-    }
-
     /**
      * While the app is open and the bridge is up, open the farm on its own
-     * when the pool is nearly empty. A cool-down keeps a failing farm from
-     * reopening in a loop: 2 min after a success, 10 min after a failure.
+     * when the pool is nearly empty. The cooldown (2 min after a success, 10
+     * after a failure) keeps a failing farm from reopening in a loop.
      */
     private fun maybeTopUp() {
-        if (!resumed || !bridgeAlive || !autoSwitch.isChecked) return
-        if (lastTokenCount < 0 || lastTokenCount > LOW_POOL) return
-        if (TokenFarmActivity.running) return
+        if (!resumed || !Prefs.autoTopUp(this)) return
+        val h = health
+        if (!h.up || h.warming || h.tokens < 0 || h.tokens > LOW_POOL) return
+        if (FarmState.running || !FarmState.cooldownOk()) return
         val now = System.currentTimeMillis()
-        val cooldown = if (TokenFarmActivity.lastResultOk) 2 * 60_000L else 10 * 60_000L
-        val last = maxOf(lastTopUpAt, TokenFarmActivity.lastFinishedAt)
-        if (last != 0L && now - last < cooldown) return
+        if (now - lastTopUpAt < 30_000L) return
         lastTopUpAt = now
         startActivity(Intent(this, TokenFarmActivity::class.java).apply {
             putExtra(TokenFarmActivity.EXTRA_AUTO, true)
         })
     }
 
-    private fun prefs() = getSharedPreferences("pocketglm", Context.MODE_PRIVATE)
-
     override fun onResume() {
         super.onResume()
         resumed = true
-        // Wi-Fi address may have changed while the app was in the background.
-        refreshApiCard()
+        renderApi()
+        renderHome()
+        startPolling()
+    }
+
+    override fun onPause() {
+        resumed = false
+        pollJob?.cancel()
+        super.onPause()
     }
 
     override fun onDestroy() {
-        pollJob?.cancel()
         scope.cancel()
-        // The bridge keeps running while the app is open in background —
-        // stopping it is an explicit action, matching the on-demand model.
+        // The bridge keeps running when the app closes; stopping it is an explicit action.
         super.onDestroy()
+    }
+
+    companion object {
+        private const val LOW_POOL = 3
+        private const val REQ_LOGIN = 1
     }
 }

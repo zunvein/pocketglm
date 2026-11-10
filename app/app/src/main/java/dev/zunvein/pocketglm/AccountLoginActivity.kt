@@ -2,53 +2,72 @@ package dev.zunvein.pocketglm
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
-import android.widget.Button
+import android.webkit.WebViewClient
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Lets the user sign in to chat.z.ai in a WebView.
+ * Sign in to chat.z.ai inside the app.
  *
- * chat.z.ai gives every visitor an anonymous guest token the moment the page
- * opens, so the app must not grab a token on its own. It waits until the user
- * taps "I am signed in", reads the page's token once, refuses it if it is
- * still a guest token, and otherwise saves it encrypted through
- * [AccountStore]. The WebView's cookies and storage are then wiped so the
- * token farm keeps visiting as an anonymous browser.
+ * Two things matter here:
+ *  - A WebView with NO WebViewClient hands every navigation to the system,
+ *    which is why the Google / GitHub buttons used to jump out to the default
+ *    browser. The client below keeps http(s) pages inside this WebView.
+ *  - chat.z.ai gives every visitor an anonymous guest token on arrival, so the
+ *    token is only read after the user taps "I am signed in", and a guest
+ *    token is refused.
  *
- * Google sign-in is usually refused inside a WebView; email login works.
+ * Google often refuses sign-in from embedded browsers; email and GitHub
+ * work. The WebView is wiped before and after, so the farm stays anonymous.
  */
 class AccountLoginActivity : Activity() {
 
     private lateinit var webView: WebView
-    private lateinit var confirm: Button
+    private lateinit var confirm: android.widget.Button
+    private lateinit var status: android.widget.TextView
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val hint = TextView(this).apply {
-            setPadding(32, 24, 32, 12)
-            text = "Sign in with your email below. When the chat page shows your account, tap the button."
+        wipe()
+
+        status = Ui.text(this, "Sign in below. When the chat page shows your account, tap the button.", 13f, R.color.textDim).apply {
+            setPadding(Ui.dp(this@AccountLoginActivity, 16), Ui.dp(this@AccountLoginActivity, 12), Ui.dp(this@AccountLoginActivity, 16), Ui.dp(this@AccountLoginActivity, 8))
         }
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.userAgentString = MOBILE_UA
+            // window.open() from the provider buttons loads in this same view.
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val scheme = request.url.scheme
+                    // Pages stay here; app links (intent:, market:, ...) are ignored.
+                    return scheme != "http" && scheme != "https"
+                }
+
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    status.text = url?.substringAfter("://")?.substringBefore('/') ?: ""
+                }
+            }
         }
-        confirm = Button(this).apply {
-            text = "I am signed in"
+        confirm = Ui.button(this, "I am signed in", Ui.Kind.PRIMARY).apply {
             setOnClickListener { readToken() }
         }
+        val pad = Ui.dp(this, 12)
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(hint)
-            addView(webView, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(confirm)
+            addView(status)
+            addView(webView, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
+            addView(confirm, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { setMargins(pad, pad, pad, pad) })
         })
         webView.loadUrl("https://chat.z.ai/auth")
     }
@@ -65,16 +84,10 @@ class AccountLoginActivity : Activity() {
                 return@evaluateJavascript
             }
             when (val r = AccountStore.add(applicationContext, token)) {
-                is AccountStore.AddResult.Added -> {
-                    toast("Account saved (${r.account.hint})")
-                    wipeAndClose()
-                }
-                AccountStore.AddResult.Duplicate -> {
-                    toast("That account is already saved")
-                    wipeAndClose()
-                }
+                is AccountStore.AddResult.Added -> { toast("Account saved (${r.account.hint})"); wipeAndClose() }
+                AccountStore.AddResult.Duplicate -> { toast("That account is already saved"); wipeAndClose() }
                 AccountStore.AddResult.Guest ->
-                    toast("This is still a guest session. Sign in with email first, then tap again.")
+                    toast("This is still a guest session. Sign in first, then tap again.")
                 is AccountStore.AddResult.Invalid -> toast(r.reason)
                 is AccountStore.AddResult.StorageError ->
                     toast("Could not store the token securely: ${r.reason}")
@@ -84,16 +97,32 @@ class AccountLoginActivity : Activity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
-    private fun wipeAndClose() {
+    private fun wipe() {
         CookieManager.getInstance().removeAllCookies(null)
         WebStorage.getInstance().deleteAllData()
+    }
+
+    private fun wipeAndClose() {
+        wipe()
         setResult(RESULT_OK)
         finish()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
 
     override fun onDestroy() {
         (webView.parent as? android.view.ViewGroup)?.removeView(webView)
         webView.destroy()
         super.onDestroy()
+    }
+
+    companion object {
+        // Chrome on Android, without the "wv" marker that embedded WebViews carry.
+        private const val MOBILE_UA =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"
     }
 }
