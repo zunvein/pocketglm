@@ -31,12 +31,7 @@ jobs:
       - name: Smoke test (linux build, same code)
         run: |
           go build -o /tmp/zai-smoke .
-          python3 - <<'PY'
-          import sqlite3
-          db = sqlite3.connect('tokens.sqlite')
-          db.execute('CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)')
-          db.commit()
-          PY
+          python3 -c "import sqlite3; db = sqlite3.connect('tokens.sqlite'); db.execute('CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)'); db.commit()"
           /tmp/zai-smoke & BPID=$!
           sleep 3
           if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: proses mati duluan"; exit 1; fi
