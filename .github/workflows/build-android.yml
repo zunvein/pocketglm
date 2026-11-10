@@ -31,10 +31,15 @@ jobs:
       - name: Smoke test (linux build, same code)
         run: |
           go build -o /tmp/zai-smoke .
-          # binary harus jalan minimal beberapa detik tanpa crash; auth bikin dia nunggu
+          # Binary exit-1 kalau pool captcha gak ada — itu perilaku NORMAL saat boot.
+          # Buat smoke: sediain pool kosong dummy, pastiin proses hidup 3 detik + /health respond.
+          mkdir -p pool
+          : > pool/tokens-live-smoke.sqlite
           /tmp/zai-smoke & BPID=$!
-          sleep 2
-          kill -0 $BPID 2>/dev/null && echo "smoke: alive after 2s"
+          sleep 3
+          if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: proses mati duluan"; exit 1; fi
+          curl -sf --max-time 5 http://127.0.0.1:3012/health >/dev/null && echo "smoke OK: alive + /health respond" || echo "smoke WARN: /health belum respond (mungkin nunggu init)"
+          exit 0
 
       - name: Report size + type
         run: |
