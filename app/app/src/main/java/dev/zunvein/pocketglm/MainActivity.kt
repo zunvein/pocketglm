@@ -1,5 +1,7 @@
 package dev.zunvein.pocketglm
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -35,6 +37,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var toggleButton: Button
     private lateinit var farmButton: Button
+    private lateinit var copyButton: Button
     private lateinit var statusText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +45,7 @@ class MainActivity : AppCompatActivity() {
 
         toggleButton = Button(this).apply { text = "▶ START bridge" }
         farmButton = Button(this).apply { text = "🌾 Open token farm" }
+        copyButton = Button(this).apply { text = "📋 Copy all logs" }
         statusText = TextView(this).apply {
             setTextIsSelectable(true)
             setPadding(48, 24, 48, 24)
@@ -54,6 +58,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(pad, pad, pad, pad)
             addView(toggleButton)
             addView(farmButton)
+            addView(copyButton)
             addView(ScrollView(this@MainActivity).apply { addView(statusText) })
         }
         setContentView(root)
@@ -62,6 +67,27 @@ class MainActivity : AppCompatActivity() {
         farmButton.setOnClickListener {
             startActivity(Intent(this, TokenFarmActivity::class.java))
         }
+        copyButton.setOnClickListener { copyAllLogs() }
+    }
+
+    /**
+     * One-tap bug report: current status card + the FULL bridge.log into the
+     * clipboard, so a failure can be pasted straight into a chat without
+     * fighting with text selection inside the ScrollView.
+     */
+    private fun copyAllLogs() {
+        val sb = StringBuilder()
+        sb.append(statusText.text)
+        val log = File(filesDir, "bridge/bridge.log")
+        if (log.exists()) {
+            sb.append("\n\n—— bridge.log (full) ——\n").append(log.readText())
+        } else {
+            sb.append("\n\n(bridge.log does not exist yet)")
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("pocketglm-logs", sb.toString()))
+        copyButton.text = "✓ Copied to clipboard"
+        copyButton.postDelayed({ copyButton.text = "📋 Copy all logs" }, 2000)
     }
 
     private fun toggleBridge() {

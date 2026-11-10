@@ -40,9 +40,14 @@ android {
     }
 
     packaging {
-        // The "jni library" is actually the Go bridge binary; never strip or
-        // compress it (executable must land byte-identical).
+        // The "jni library" is actually the Go bridge binary. The service
+        // copies it out of nativeLibraryDir and exec()s it, so it must exist
+        // as a REAL file on disk. AGP 8 defaults (useLegacyPackaging=false)
+        // leave .so files mmap'ed inside the APK and nativeLibraryDir ends up
+        // EMPTY on the device; opting into legacy packaging makes the
+        // installer extract libzai.so with the exec bit set.
         jniLibs {
+            useLegacyPackaging = true
             keepDebugSymbols += listOf("**/libzai.so")
         }
     }

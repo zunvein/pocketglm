@@ -83,8 +83,14 @@ class BridgeService : Service() {
         try {
             val logFile = File(File(filesDir, "bridge"), "bridge.log")
             logFile.appendText("\n[app] ${e.javaClass.simpleName}: ${e.message}\n")
-            val nat = File(applicationInfo.nativeLibraryDir, "libzai.so")
-            logFile.appendText("[app] nativeLibraryDir libzai.so exists: ${nat.exists()} (${nat.length()} bytes)\n")
+            val natDir = File(applicationInfo.nativeLibraryDir)
+            logFile.appendText("[app] nativeLibraryDir=${natDir.absolutePath} (exists=${natDir.exists()})\n")
+            val files = natDir.listFiles()
+            if (files.isNullOrEmpty()) {
+                logFile.appendText("[app]   (empty — libs not extracted from APK)\n")
+            } else {
+                files.forEach { logFile.appendText("[app]   ${it.name} (${it.length()} bytes)\n") }
+            }
         } catch (ignored: Exception) {
         }
     }
