@@ -5,7 +5,7 @@ import java.net.HttpURLConnection
 import java.net.Proxy
 import java.net.URL
 
-/** Talks to the local bridge's /admin/tunnel/* endpoints over loopback. */
+/** Talks to the local bridge over loopback: the tunnel status, start and stop endpoints. */
 object TunnelClient {
     private const val BASE = "http://127.0.0.1:3001/admin/tunnel"
 
