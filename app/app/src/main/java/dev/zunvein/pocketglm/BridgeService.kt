@@ -52,33 +52,67 @@ class BridgeService : Service() {
         promoteToForeground()
 
         Thread {
+            val workDir = File(filesDir, "bridge").apply { mkdirs() }
+            val logFile = File(workDir, "bridge.log")
+
+            // Boot guard: the bridge refuses to start without a token DB.
             try {
-                val workDir = File(filesDir, "bridge").apply { mkdirs() }
-                val binary = File(workDir, BINARY_NAME)
-
-                // Always (re)extract: a copy left over from a previous
-                // failed start carries poisoned permission bits and can
-                // never be repaired in place (Android's write-implies-noexec
-                // rule) — a fresh copy, permissions applied in the right
-                // order, is the only fix.
-                extractBinary(binary)
-                android.util.Log.i("PocketGLM", "bridge binary ready: ${binary.length()} bytes, exec=${binary.canExecute()}")
-
-                // Boot guard: the bridge refuses to start without a token DB.
                 ensureTokenDb(workDir)
-
-                val logFile = File(workDir, "bridge.log")
-
-                bridgeProcess = ProcessBuilder(binary.absolutePath)
-                    .directory(workDir)
-                    .redirectErrorStream(true)
-                    .redirectOutput(logFile)
-                    .start()
             } catch (e: Exception) {
-                android.util.Log.e("PocketGLM", "FAILED to start bridge", e)
                 captureFailure(e)
+                return@Thread
             }
+
+            // Remove copies made by older builds: on Android 10+ a file in
+            // app data that has EVER been opened for writing can never be
+            // executed afterwards, no matter how the permission bits are
+            // shuffled. Copying an executable into filesDir simply cannot
+            // work on this targetSdk — the only reliably executable location
+            // is nativeLibraryDir, where the INSTALLER (not the app) put
+            // libzai.so with the exec bit already set.
+            File(workDir, BINARY_NAME).delete()
+
+            // Strategy 1 (canonical): exec straight from nativeLibraryDir.
+            val nativeBin = File(applicationInfo.nativeLibraryDir, "libzai.so")
+            if (trySpawn(nativeBin, workDir, logFile)) return@Thread
+
+            // Strategy 2 (fallback, expected dead on Android 10+): fresh copy
+            // in app data with permissions in the "correct" order. Kept only
+            // so the log can prove exactly WHY it fails if it does.
+            try {
+                val copy = File(workDir, BINARY_NAME)
+                extractBinary(copy)
+                if (trySpawn(copy, workDir, logFile)) return@Thread
+            } catch (e: Exception) {
+                appendLog(workDir, "[app] copy fallback failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+
+            captureFailure(java.io.IOException("all exec strategies failed"))
         }.start()
+    }
+
+    /** Try to spawn the bridge from [bin]; true when the process started. */
+    private fun trySpawn(bin: File, workDir: File, logFile: File): Boolean {
+        return try {
+            appendLog(workDir, "[app] exec try: ${bin.absolutePath} (exists=${bin.exists()}, exec=${bin.canExecute()}, ${bin.length()} bytes)")
+            bridgeProcess = ProcessBuilder(bin.absolutePath)
+                .directory(workDir)
+                .redirectErrorStream(true)
+                .redirectOutput(logFile)
+                .start()
+            appendLog(workDir, "[app] spawned OK from ${bin.parent}")
+            true
+        } catch (e: Exception) {
+            appendLog(workDir, "[app] exec failed: ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+    }
+
+    private fun appendLog(workDir: File, line: String) {
+        try {
+            File(workDir, "bridge.log").appendText(line + "\n")
+        } catch (ignored: Exception) {
+        }
     }
 
     /** Write the failure into filesDir/bridge/bridge.log so the UI can show it. */
@@ -107,14 +141,11 @@ class BridgeService : Service() {
 
     /**
      * Copies the ARM64 bridge binary into filesDir and marks it executable.
-     * The binary ships as jniLibs/arm64-v8a/libzai.so (nativeLibs dir is
-     * extracted by the installer already, but app data dir is the only place
-     * we can reliably chmod +x and NULL-deref exec on every device).
-     *
-     * Android 10+ W^X rule: a file in app data that is EVER marked writable
-     * can never be made executable afterwards — even after clearing the
-     * write bit. Permissions must be applied in this exact order:
-     * read-only FIRST, exec bit LAST.
+     * WARNING: on Android 10+ (targetSdk >= 29) this is expected to FAIL at
+     * exec time even when setExecutable() reports success — the kernel
+     * denies execve() on any app-data file that has ever been writable.
+     * Kept only as the second diagnostic strategy; the real exec path is
+     * nativeLibraryDir (see startBridge).
      */
     private fun extractBinary(target: File) {
         val src = File(applicationInfo.nativeLibraryDir, "libzai.so")
