@@ -28,6 +28,16 @@
             android:exported="false"
             android:theme="@style/Theme.PocketGLM" />
 
+        <activity
+            android:name=".AccountsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PocketGLM" />
+
+        <activity
+            android:name=".AccountLoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PocketGLM" />
+
         <service
             android:name=".BridgeService"
             android:exported="false"

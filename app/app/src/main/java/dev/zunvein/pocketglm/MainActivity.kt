@@ -65,6 +65,7 @@ class MainActivity : AppCompatActivity() {
         toggleButton = Button(this).apply { text = "▶ START bridge" }
         farmButton = Button(this).apply { text = "🌾 Open token farm" }
         copyButton = Button(this).apply { text = "📋 Copy all logs" }
+        val accountsButton = Button(this).apply { text = "Accounts" }
         statusText = TextView(this).apply {
             setTextIsSelectable(true)
             setPadding(48, 24, 48, 24)
@@ -110,6 +111,7 @@ class MainActivity : AppCompatActivity() {
             addView(toggleButton)
             addView(farmButton)
             addView(autoSwitch)
+            addView(accountsButton)
             addView(copyButton)
             addView(statusText)
 
@@ -148,6 +150,7 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TokenFarmActivity::class.java))
         }
         copyButton.setOnClickListener { copyAllLogs() }
+        accountsButton.setOnClickListener { startActivity(Intent(this, AccountsActivity::class.java)) }
     }
 
     // ── API access card ──────────────────────────────────────────────────
@@ -279,9 +282,23 @@ class MainActivity : AppCompatActivity() {
             sb.append("\n\n(bridge.log does not exist yet)")
         }
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("pocketglm-logs", sb.toString()))
+        cm.setPrimaryClip(ClipData.newPlainText("pocketglm-logs", redact(sb.toString())))
         copyButton.text = "✓ Copied to clipboard"
         copyButton.postDelayed({ copyButton.text = "📋 Copy all logs" }, 2000)
+    }
+
+    /**
+     * Logs get pasted into chats and issues. Hide anything shaped like a
+     * credential: the app's own sk-pgl- keys, the user's saved API key (which
+     * may be custom), and JWT-shaped account tokens.
+     */
+    private fun redact(text: String): String {
+        var out = text
+        val key = ApiKeyStore.get(this)
+        if (key.length >= 8) out = out.replace(key, AccountStore.mask(key))
+        out = Regex("sk-pgl-[A-Za-z0-9]{8,}").replace(out) { AccountStore.mask(it.value) }
+        out = Regex("eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+").replace(out) { AccountStore.mask(it.value) }
+        return out
     }
 
     private fun toggleBridge() {

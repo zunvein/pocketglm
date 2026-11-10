@@ -116,9 +116,13 @@ class BridgeService : Service() {
                     environment()["ZAI_DNS"] = deviceDnsServers()
                     // Clients must present this key; generated on first use.
                     environment()["AUTH_TOKEN"] = ApiKeyStore.get(this@BridgeService)
+                    // Signed-in Z.AI accounts (decrypted only here, in memory).
+                    // Without any, the bridge keeps using its guest identity.
+                    val accounts = AccountStore.tokensForBridge(this@BridgeService)
+                    if (accounts.isNotEmpty()) environment()["ZAI_TOKENS"] = accounts
                 }
                 .start()
-            appendLog(workDir, "[app] spawned OK from ${bin.parent}")
+            appendLog(workDir, "[app] spawned OK from ${bin.parent} (accounts: ${AccountStore.list(this).count { !it.isExpired() }})")
             true
         } catch (e: Exception) {
             appendLog(workDir, "[app] exec failed: ${e.javaClass.simpleName}: ${e.message}")
