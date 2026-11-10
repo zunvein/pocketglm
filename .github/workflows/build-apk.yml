@@ -64,9 +64,7 @@ jobs:
         env:
           POCKETGLM_KEYSTORE_B64: ${{ secrets.POCKETGLM_KEYSTORE_B64 }}
           POCKETGLM_KEYSTORE_PASSWORD: ${{ secrets.POCKETGLM_KEYSTORE_PASSWORD }}
-        run: |
-          [ -n "$POCKETGLM_KEYSTORE_B64" ] || { echo "missing keystore secret"; exit 1; }
-          gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
+        run: gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
 
       - name: Report artifact
         working-directory: app
