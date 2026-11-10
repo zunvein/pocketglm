@@ -110,6 +110,20 @@ func Run() {
     // elsewhere (env unset → default transport untouched).
     installCustomDNS()
 
+    // "Bypass blocking": a local CONNECT proxy for the app's WebView, so the
+    // Token Farm and sign-in page get the same packet splitting as the bridge.
+    if fragmentEnabled() {
+        addr := os.Getenv("ZAI_FRAG_PROXY_ADDR")
+        if addr == "" {
+            addr = "127.0.0.1:3002"
+        }
+        if _, err := startFragProxy(addr); err != nil {
+            logError("bypass proxy: " + err.Error())
+        } else {
+            logInfo("bypass proxy listening on " + addr)
+        }
+    }
+
     addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 
     tokenPadded := fmt.Sprintf("%-44s", maskSecret(config.Auth.Token))

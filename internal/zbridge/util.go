@@ -200,6 +200,11 @@ func dialUTLS(ctx context.Context, network, addr string) (net.Conn, error) {
         }
     }
 
+    // Opt-in workaround for networks that reset connections by server name.
+    if fragmentEnabled() {
+        rawConn = &fragConn{Conn: rawConn, host: host}
+    }
+
     // uTLS config — advertise HTTP/1.1 only to avoid HTTP/2 fingerprinting
     config := &utls.Config{
         ServerName:         host,

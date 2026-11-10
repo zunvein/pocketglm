@@ -595,7 +595,7 @@ func sendToZAIStream(prompt string, opts struct {
 		req, err := http.NewRequestWithContext(ctx, "POST", urlStr, bytes.NewReader(bodyBytes))
 		if err != nil {
 			cancel()
-			return fmt.Errorf("Z.AI connection error: %s", err.Error())
+			return fmt.Errorf("Z.AI connection error: %s", safeNetErr(err))
 		}
 		req.Header.Set("authorization", "Bearer "+token)
 		req.Header.Set("User-Agent", zaiUserAgent)
@@ -608,7 +608,7 @@ func sendToZAIStream(prompt string, opts struct {
 		resp, err := zaiHTTPClient.Do(req)
 		if err != nil {
 			cancel()
-			return fmt.Errorf("Z.AI connection error: %s", err.Error())
+			return fmt.Errorf("Z.AI connection error: %s", safeNetErr(err))
 		}
 
 		if config.Logging.Level == "debug" {

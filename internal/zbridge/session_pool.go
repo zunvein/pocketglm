@@ -209,7 +209,7 @@ func DeleteZAIChat(ctx context.Context, chatID string) error {
 
 		resp, err := zaiHTTPClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("Z.AI chat delete connection error: %s", err.Error())
+			return fmt.Errorf("Z.AI chat delete connection error: %s", safeNetErr(err))
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()

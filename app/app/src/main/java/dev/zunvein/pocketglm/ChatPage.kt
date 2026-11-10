@@ -260,7 +260,7 @@ class ChatPage(
     private fun showError(b: Bubble, text: String) {
         if (b.content.text.toString().startsWith("Waiting for the bridge")) b.content.text = ""
         b.error.visibility = View.VISIBLE
-        b.error.text = text
+        b.error.text = Redact.text(act, text)
         pinToEnd()
     }
 

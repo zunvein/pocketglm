@@ -525,7 +525,7 @@ func uploadImageToZAI(ctx context.Context, img *resolvedImage) (map[string]inter
         resp, err := zaiHTTPClient.Do(req)
         if err != nil {
             cancel()
-            return nil, fmt.Errorf("file upload connection error: %s", err.Error())
+            return nil, fmt.Errorf("file upload connection error: %s", safeNetErr(err))
         }
         respBody, _ := io.ReadAll(resp.Body)
         resp.Body.Close()

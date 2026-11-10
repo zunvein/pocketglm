@@ -247,7 +247,25 @@ class MainActivity : AppCompatActivity() {
             addView(Ui.gap(this@MainActivity, 8))
             addView(Ui.text(this@MainActivity, "Xiaomi, Oppo, Vivo, Huawei and Samsung phones also have their own autostart or battery list. If the bridge still gets killed, allow PocketGLM there.", 12f, R.color.textDim))
         }
-        return page(bridgeCard, farmCard, keepCard)
+        val (bypassRow, _) = Ui.switchRow(
+            this, "Bypass blocking",
+            "For networks that cut the connection to chat.z.ai. Splits the first packet of each secure connection in two. Restarts the bridge.",
+            Prefs.bypass(this)
+        ) { on ->
+            Prefs.setBypass(this, on)
+            if (isUp() || isStarting()) {
+                restartBridge()
+                Toast.makeText(this, "Restarting the bridge", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val netCard = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Blocked network", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 4))
+            addView(bypassRow)
+            addView(Ui.gap(this@MainActivity, 4))
+            addView(Ui.text(this@MainActivity, "Not guaranteed: it only helps when the block reads the site name from the first packet. A VPN always works.", 12f, R.color.textDim))
+        }
+        return page(bridgeCard, farmCard, netCard, keepCard)
     }
 
     private fun isUp() = health.up

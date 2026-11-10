@@ -53,6 +53,7 @@ class Farmer(
     private var settled = false
     private var destroyed = false
     private var bootInjected = false
+    private var pageFailed = false
     private var owns = false
 
     private val log1Deadline = Runnable { settle("Log1 not seen in time") }
@@ -82,7 +83,24 @@ class Farmer(
                 }
             }
 
+            override fun onReceivedError(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?,
+                error: android.webkit.WebResourceError?,
+            ) {
+                if (request?.isForMainFrame != true || settled || destroyed) return
+                pageFailed = true
+                settled = true
+                ui.removeCallbacks(watchdog)
+                val why = error?.description?.toString().orEmpty().ifEmpty { "unknown error" }
+                val hint = if (Prefs.bypass(appCtx)) "" else " Your network may block chat.z.ai: try the \"Bypass blocking\" switch on the Home tab."
+                val msg = "chat.z.ai could not be loaded ($why).$hint"
+                log(msg)
+                finish(false, "chat.z.ai not reachable")
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (pageFailed) return
                 if (!bootInjected && url?.startsWith("https://chat.z.ai") == true) {
                     bootInjected = true
                     view?.evaluateJavascript(FarmJs.HARVEST_BOOT_JS, null)
@@ -98,7 +116,9 @@ class Farmer(
             // onPageStarted installs the same hook.
         }
         ui.postDelayed(watchdog, WATCHDOG_MS)
-        webView.loadUrl("https://chat.z.ai")
+        Bypass.prepare(appCtx) {
+            if (!destroyed && !settled) webView.loadUrl("https://chat.z.ai")
+        }
     }
 
     /** Gives a WebView that is not on screen a real size, so the page lays out. */

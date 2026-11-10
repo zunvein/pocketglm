@@ -34,6 +34,10 @@ object Prefs {
     fun chatModel(ctx: Context): String = p(ctx).getString("chat_model", null) ?: "glm-5.2"
     fun setChatModel(ctx: Context, m: String) = p(ctx).edit().putString("chat_model", m).apply()
 
+    /** Send the TLS handshake in two pieces and route WebViews through a local proxy (blocked networks). */
+    fun bypass(ctx: Context) = p(ctx).getBoolean("bypass_blocking", false)
+    fun setBypass(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("bypass_blocking", on).apply()
+
     /** The user wants the public link (ngrok) up whenever the bridge runs. */
     fun publicLink(ctx: Context) = p(ctx).getBoolean("public_link", false)
     fun setPublicLink(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("public_link", on).apply()

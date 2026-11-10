@@ -154,6 +154,11 @@ class BridgeService : Service() {
                     // Without any, the bridge keeps using its guest identity.
                     val accounts = AccountStore.tokensForBridge(this@BridgeService)
                     if (accounts.isNotEmpty()) environment()["ZAI_TOKENS"] = accounts
+                    // Blocked-network workaround (see Bypass.kt): off unless the user turned it on.
+                    if (Prefs.bypass(this@BridgeService)) {
+                        environment()["ZAI_FRAGMENT"] = "1"
+                        environment()["ZAI_FRAG_PROXY_ADDR"] = "${Bypass.PROXY_HOST}:${Bypass.PROXY_PORT}"
+                    }
                     // Public link (ngrok). The authtoken stays in memory here and is
                     // never logged; without it the bridge keeps the tunnel inert.
                     TunnelStore.authtoken(this@BridgeService)?.let { tok ->

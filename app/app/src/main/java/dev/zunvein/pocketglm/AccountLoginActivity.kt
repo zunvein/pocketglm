@@ -69,7 +69,7 @@ class AccountLoginActivity : Activity() {
             addView(webView, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
             addView(confirm, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { setMargins(pad, pad, pad, pad) })
         })
-        webView.loadUrl("https://chat.z.ai/auth")
+        Bypass.prepare(this) { if (!isDestroyed) webView.loadUrl("https://chat.z.ai/auth") }
     }
 
     private fun readToken() {
