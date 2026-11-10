@@ -56,10 +56,13 @@ class BridgeService : Service() {
                 val workDir = File(filesDir, "bridge").apply { mkdirs() }
                 val binary = File(workDir, BINARY_NAME)
 
-                if (!binary.exists() || binary.length() == 0L) {
-                    extractBinary(binary)
-                    android.util.Log.i("PocketGLM", "extracted bridge binary: ${binary.length()} bytes")
-                }
+                // Always (re)extract: a copy left over from a previous
+                // failed start carries poisoned permission bits and can
+                // never be repaired in place (Android's write-implies-noexec
+                // rule) — a fresh copy, permissions applied in the right
+                // order, is the only fix.
+                extractBinary(binary)
+                android.util.Log.i("PocketGLM", "bridge binary ready: ${binary.length()} bytes, exec=${binary.canExecute()}")
 
                 // Boot guard: the bridge refuses to start without a token DB.
                 ensureTokenDb(workDir)
@@ -107,15 +110,25 @@ class BridgeService : Service() {
      * The binary ships as jniLibs/arm64-v8a/libzai.so (nativeLibs dir is
      * extracted by the installer already, but app data dir is the only place
      * we can reliably chmod +x and NULL-deref exec on every device).
+     *
+     * Android 10+ W^X rule: a file in app data that is EVER marked writable
+     * can never be made executable afterwards — even after clearing the
+     * write bit. Permissions must be applied in this exact order:
+     * read-only FIRST, exec bit LAST.
      */
     private fun extractBinary(target: File) {
         val src = File(applicationInfo.nativeLibraryDir, "libzai.so")
         src.copyTo(target, overwrite = true)
-        // exec permission is required to spawn the process
-        target.setExecutable(true, false)
-        // W^X hardening on modern Android: strip the write bit on some
-        // devices exec requires the file NOT be writable
+        // drop the write bit while the file is still a plain data file…
         target.setWritable(false, false)
+        target.setReadable(true, false)
+        // …only now may the exec bit stick
+        val ok = target.setExecutable(true, false) && target.canExecute()
+        if (!ok) {
+            throw IllegalStateException(
+                "cannot mark ${target.name} executable (W^X restriction); src=${src.absolutePath} exists=${src.exists()}"
+            )
+        }
     }
 
     /**
