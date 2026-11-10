@@ -25,18 +25,29 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/zai-smoke .
-          GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/jniLibs/arm64-v8a/libzai.so .
-          file app/app/src/main/jniLibs/arm64-v8a/libzai.so
+          GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/assets/bridge/zai-api-android-arm64 .
+          file app/app/src/main/assets/bridge/zai-api-android-arm64
 
       - name: Smoke test (linux build, same code)
         run: |
           go build -o /tmp/zai-smoke .
-          python3 -c "import sqlite3; db = sqlite3.connect('tokens.sqlite'); db.execute('CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)'); db.commit()"
+          python3 - <<'PY'
+          import sqlite3
+          db = sqlite3.connect('tokens.sqlite')
+          db.execute('CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)')
+          db.commit()
+          PY
           /tmp/zai-smoke & BPID=$!
           sleep 3
-          if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: process died early"; exit 1; fi
-          curl -sf --max-time 5 http://127.0.0.1:3001/health >/dev/null && echo "smoke OK: alive + /health responds" || { echo "smoke FAIL: /health not responding"; exit 1; }
+          if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: proses mati duluan"; exit 1; fi
+          curl -sf --max-time 5 http://127.0.0.1:3001/health >/dev/null && echo "smoke OK: alive + /health respond" || { echo "smoke FAIL: /health gak respond"; exit 1; }
           kill $BPID 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zai-api-android-arm64
+          path: app/app/src/main/assets/bridge/zai-api-android-arm64
+          retention-days: 30
 
   apk:
     runs-on: ubuntu-latest
@@ -44,10 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pull the bridge artifact built (and smoke-tested) by the bridge job
       - uses: actions/download-artifact@v4
         with:
           name: zai-api-android-arm64
-          path: app/app/src/main/jniLibs/arm64-v8a/
+          path: app/app/src/main/assets/bridge/
 
       - uses: actions/setup-java@v4
         with:
@@ -59,11 +71,8 @@ jobs:
         with:
           build-root-directory: app
 
-      - name: Build debug APK (stable CI signing)
+      - name: Build debug APK
         working-directory: app
-        env:
-          POCKETGLM_KEYSTORE_B64: ${{ secrets.POCKETGLM_KEYSTORE_B64 }}
-          POCKETGLM_KEYSTORE_PASSWORD: ${{ secrets.POCKETGLM_KEYSTORE_PASSWORD }}
         run: gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
 
       - name: Report artifact
