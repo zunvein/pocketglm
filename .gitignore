@@ -17,3 +17,10 @@ local.properties
 .swapenv
 .new_authtoken
 .assets/
+# Android/Gradle
+app/.gradle/
+app/app/build/
+app/build/
+app/local.properties
+*.jks
+*.keystore
