@@ -773,8 +773,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             val p = Ui.dp(this@MainActivity, 16)
             setPadding(p, p, p, p)
-            addView(share, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 8) })
-            addView(copy, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
+            addView(buttonRow(share, copy), LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
             addView(logText)
         }
         logsScroll = ScrollView(this).apply { addView(col) }

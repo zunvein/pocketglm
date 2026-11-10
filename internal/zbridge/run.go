@@ -126,7 +126,6 @@ func Run() {
 
     addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 
-    tokenPadded := fmt.Sprintf("%-44s", maskSecret(config.Auth.Token))
 
     // If the operator passed ngrok credentials via env, bring the public
     // link up right away so it recovers automatically on every bridge start.
@@ -135,20 +134,7 @@ func Run() {
             logInfo("tunnel: not started: " + err.Error())
         }
     }
-    fmt.Printf(`
-╔═══════════════════════════════════════════════════════════════╗
-║           Z.AI Direct Bridge Server Started                   ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Mode:          DIRECT HTTP (no browser needed)               ║
-║  Captcha IPC:   IN-MEMORY (no FIFO / named pipe)             ║
-║  Health:        http://localhost:%d/health               ║
-╠═══════════════════════════════════════════════════════════════╣
-║  OpenAI API:    http://localhost:%d/v1/chat/completions
-║  Anthropic API: http://localhost:%d/v1/messages  ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Auth Token:    %s║
-╚═══════════════════════════════════════════════════════════════╝
-`, config.Server.Port, config.Server.Port, config.Server.Port, tokenPadded)
+    printBanner(config.Server.Port, maskSecret(config.Auth.Token))
 
     go func() {
         if err := initializeSession(); err != nil {

@@ -77,6 +77,18 @@ object Ui {
 
 
 
+    /** A small secondary button for headers and corners (36 dp tall). */
+    fun compact(ctx: Context, label: String, kind: Kind = Kind.TONAL): Button = Button(ctx).apply {
+        text = label
+        isAllCaps = false
+        textSize = 13f
+        stateListAnimator = null
+        minHeight = dp(ctx, 36)
+        minimumHeight = dp(ctx, 36)
+        setPadding(dp(ctx, 12), 0, dp(ctx, 12), 0)
+        style(kind)
+    }
+
     fun pill(ctx: Context, label: String, colorId: Int): TextView = text(ctx, label, 12f, colorId, true).apply {
         setPadding(dp(ctx, 10), dp(ctx, 4), dp(ctx, 10), dp(ctx, 4))
         background = shape(ColorUtils.setAlphaComponent(color(ctx, colorId), 0x26), dp(ctx, 12).toFloat())
