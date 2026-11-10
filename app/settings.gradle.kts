@@ -15,3 +15,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "PocketGLM"
+
+include(":app")
