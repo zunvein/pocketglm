@@ -1,0 +1,19 @@
+# Ignore local build artifacts
+/zai-api-android-arm64
+*.apk
+*.aab
+
+# Kotlin/Gradle app build outputs (P3)
+app/build/
+.gradle/
+local.properties
+
+# Go runtime artifacts (jaga-jaga kalau ada yang build lokal)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+.env
+.swapenv
+.new_authtoken
+.assets/
