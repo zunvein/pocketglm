@@ -137,9 +137,19 @@ class MainActivity : AppCompatActivity() {
             conn.connectTimeout = 1500
             conn.readTimeout = 1500
             conn.requestMethod = "GET"
-            val body = conn.inputStream.bufferedReader().readText()
+            // Read the body even for non-2xx: the bridge answers /health with
+            // 503 while its Z.AI session is still initializing (DNS/warmup),
+            // and that JSON is exactly what the status card should render
+            // instead of a misleading "FileNotFoundException".
+            val body = try {
+                conn.inputStream.bufferedReader().readText()
+            } catch (e: Exception) {
+                conn.errorStream?.bufferedReader()?.readText()
+                    ?: throw e
+            }
+            val code = conn.responseCode
             conn.disconnect()
-            renderHealth(body)
+            renderHealth(body, code)
         } catch (e: Exception) {
             "Bridge: starting… (no response yet)\n${e.javaClass.simpleName}: ${e.message}"
         }
@@ -155,11 +165,11 @@ class MainActivity : AppCompatActivity() {
         return health
     }
 
-    private fun renderHealth(body: String): String {
+    private fun renderHealth(body: String, code: Int = 200): String {
         return try {
             val o = JSONObject(body)
             val captcha = o.optJSONObject("captcha")
-            val sb = StringBuilder("Bridge: UP\n")
+            val sb = StringBuilder(if (code == 200) "Bridge: UP\n" else "Bridge: UP (warming up, HTTP $code)\n")
             sb.append("healthy: ").append(o.optBoolean("healthy")).append('\n')
             sb.append("tokens: ").append(o.optInt("tokenCount", -1)).append('\n')
             if (captcha != null) {

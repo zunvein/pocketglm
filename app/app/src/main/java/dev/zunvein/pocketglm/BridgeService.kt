@@ -99,6 +99,7 @@ class BridgeService : Service() {
                 .directory(workDir)
                 .redirectErrorStream(true)
                 .redirectOutput(logFile)
+                .apply { environment()["ZAI_DNS"] = deviceDnsServers() }
                 .start()
             appendLog(workDir, "[app] spawned OK from ${bin.parent}")
             true
@@ -112,6 +113,25 @@ class BridgeService : Service() {
         try {
             File(workDir, "bridge.log").appendText(line + "\n")
         } catch (ignored: Exception) {
+        }
+    }
+
+    /**
+     * The Go bridge is a pure-Go (netgo) binary: it does NOT use Android's
+     * system resolver and there is no /etc/resolv.conf in an app process,
+     * so every hostname lookup would die on [::1]:53. We read the device's
+     * current DNS servers from ConnectivityManager and pass them to the
+     * bridge via ZAI_DNS; the bridge installs a resolver that uses them.
+     */
+    private fun deviceDnsServers(): String {
+        return try {
+            val cm = getSystemService(android.net.ConnectivityManager::class.java)
+            val link = cm.getLinkProperties(cm.activeNetwork) ?: return ""
+            val servers = link.dnsServers.joinToString(",") { it.hostAddress ?: it.hostName }
+            appendLog(File(filesDir, "bridge"), "[app] ZAI_DNS=$servers")
+            servers
+        } catch (e: Exception) {
+            ""
         }
     }
 

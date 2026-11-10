@@ -97,6 +97,12 @@ func Run() {
 
     handler := NewHandler()
 
+    // Android: the app process has no /etc/resolv.conf (netgo falls back to
+    // [::1]:53), so the app passes the device DNS servers via ZAI_DNS and we
+    // route all outbound http through a resolver that uses them. No-op
+    // elsewhere (env unset → default transport untouched).
+    installCustomDNS()
+
     addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 
     tokenPadded := fmt.Sprintf("%-44s", config.Auth.Token)
