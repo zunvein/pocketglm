@@ -62,12 +62,19 @@ class AccountLoginActivity : Activity() {
         confirm = Ui.button(this, "I am signed in", Ui.Kind.PRIMARY).apply {
             setOnClickListener { readToken() }
         }
+        val reloadBtn = Ui.button(this, "Reload", Ui.Kind.TONAL).apply {
+            setOnClickListener { webView.loadUrl("https://chat.z.ai/auth") }
+        }
         val pad = Ui.dp(this, 12)
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(status)
             addView(webView, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
-            addView(confirm, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { setMargins(pad, pad, pad, pad) })
+            addView(LinearLayout(this@AccountLoginActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(reloadBtn, LinearLayout.LayoutParams(0, Ui.WRAP, 1f).apply { marginEnd = Ui.dp(this@AccountLoginActivity, 8) })
+                addView(confirm, LinearLayout.LayoutParams(0, Ui.WRAP, 2f))
+            }, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { setMargins(pad, pad, pad, pad) })
         })
         Bypass.prepare(this) { if (!isDestroyed) webView.loadUrl("https://chat.z.ai/auth") }
     }

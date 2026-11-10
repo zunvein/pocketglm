@@ -21,6 +21,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -215,6 +217,9 @@ class MainActivity : AppCompatActivity() {
         }
         bgStatusText = Ui.text(this, "", 13f, R.color.textDim)
 
+        val resetPool = Ui.button(this, "Reset token pool", Ui.Kind.TEXT).apply {
+            setOnClickListener { confirmResetPool() }
+        }
         val farmCard = Ui.card(this).apply {
             addView(Ui.text(this@MainActivity, "Token supply", 18f, R.color.text, true))
             addView(Ui.text(this@MainActivity, "Every chat uses one device token. One farm run adds about ${Farmer.DEFAULT_MINT + 1}.", 13f, R.color.textDim))
@@ -223,6 +228,8 @@ class MainActivity : AppCompatActivity() {
             addView(autoRow)
             addView(bgRow)
             addView(bgStatusText)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(resetPool)
         }
 
         val (awakeRow, _) = Ui.switchRow(
@@ -752,7 +759,10 @@ class MainActivity : AppCompatActivity() {
             background = Ui.shape(Ui.color(this@MainActivity, R.color.surfaceAlt), Ui.dp(this@MainActivity, 10).toFloat())
             textSize = 11f
         }
-        val copy = Ui.button(this, "Copy all logs", Ui.Kind.PRIMARY).apply {
+        val share = Ui.button(this, "Share full log", Ui.Kind.PRIMARY).apply {
+            setOnClickListener { shareFullLog() }
+        }
+        val copy = Ui.button(this, "Copy all logs", Ui.Kind.TONAL).apply {
             setOnClickListener {
                 val full = LogFile.file(this@MainActivity).let { if (it.exists()) it.readText() else "(no bridge.log yet)" }
                 val header = "healthy=${health.healthy} tokens=${health.tokens} ok=${health.computeOk} fail=${health.computeFail} breaker=${health.breaker}\n\n"
@@ -763,6 +773,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             val p = Ui.dp(this@MainActivity, 16)
             setPadding(p, p, p, p)
+            addView(share, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 8) })
             addView(copy, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
             addView(logText)
         }
@@ -777,6 +788,59 @@ class MainActivity : AppCompatActivity() {
             val atEnd = !logsScroll.canScrollVertically(1)
             logText.text = shown
             if (atEnd) logsScroll.post { logsScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    // ── reset + full log ─────────────────────────────────────────────────
+
+    private fun confirmResetPool() {
+        AlertDialog.Builder(this)
+            .setTitle("Reset the token pool?")
+            .setMessage("Deletes every device token on this phone and restarts the bridge with an empty pool. Accounts and the API key stay. Then farm again.")
+            .setPositiveButton("Reset") { _, _ -> resetPool() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun resetPool() {
+        startService(Intent(this, BridgeService::class.java).apply { action = BridgeService.ACTION_STOP })
+        startingUntil = 0L
+        health = BridgeClient.DOWN
+        renderHome()
+        scope.launch {
+            // Wait until the bridge has really exited before touching its database.
+            var tries = 0
+            while (tries++ < 20 && withContext(Dispatchers.IO) { BridgeClient.health().up }) delay(500)
+            withContext(Dispatchers.IO) {
+                val dir = File(filesDir, "bridge")
+                for (n in listOf("tokens.sqlite", "tokens.sqlite-wal", "tokens.sqlite-shm")) File(dir, n).delete()
+                BridgeDb.ensure(dir)
+            }
+            Toast.makeText(this@MainActivity, "Pool cleared, starting the bridge", Toast.LENGTH_SHORT).show()
+            startForegroundService(Intent(this@MainActivity, BridgeService::class.java).apply { action = BridgeService.ACTION_START })
+            startingUntil = System.currentTimeMillis() + 20_000L
+            renderHome()
+        }
+    }
+
+    /** The whole bridge.log, secrets hidden, handed to the system share sheet as a file (no line cut). */
+    private fun shareFullLog() {
+        val header = "healthy=${health.healthy} tokens=${health.tokens} ok=${health.computeOk} fail=${health.computeFail} breaker=${health.breaker}\n\n"
+        scope.launch {
+            val uri = withContext(Dispatchers.IO) {
+                val src = LogFile.file(this@MainActivity)
+                val dir = File(cacheDir, "share").apply { mkdirs() }
+                val out = File(dir, "pocketglm-bridge.log.txt")
+                val body = if (src.exists()) src.readText() else "(no bridge.log yet)"
+                out.writeText(Redact.text(this@MainActivity, header + body))
+                FileProvider.getUriForFile(this@MainActivity, LOG_AUTHORITY, out)
+            }
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share full log"))
         }
     }
 
@@ -852,5 +916,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val LOW_POOL = 3
         private const val REQ_LOGIN = 1
+        const val LOG_AUTHORITY = "dev.zunvein.pocketglm.fileprovider"
     }
 }

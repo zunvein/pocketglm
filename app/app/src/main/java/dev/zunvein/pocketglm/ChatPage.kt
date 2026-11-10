@@ -27,7 +27,7 @@ class ChatPage(
     private val scope: CoroutineScope,
     private val bridgeState: () -> BridgeClient.Health,
 ) {
-    private class Bubble(val reasoning: TextView, val content: TextView, val error: TextView)
+    private class Bubble(val head: TextView, val reasoning: TextView, val content: TextView, val error: TextView)
 
     private var history = JSONArray()
     private var models: List<String> = ChatClient.FALLBACK_MODELS
@@ -217,9 +217,19 @@ class ChatPage(
     }
 
     private fun addAssistant(): Bubble {
+        // Thinking stays folded until the user taps its header.
+        val head = Ui.text(act, "\u25B8 Thinking (tap to show)", 12f, R.color.textDim, true).apply {
+            visibility = View.GONE
+            setPadding(0, 0, 0, Ui.dp(act, 4))
+        }
         val reasoning = Ui.text(act, "", 12f, R.color.textDim).apply {
             setTextIsSelectable(true)
             visibility = View.GONE
+        }
+        head.setOnClickListener {
+            val open = reasoning.visibility != View.VISIBLE
+            reasoning.visibility = if (open) View.VISIBLE else View.GONE
+            head.text = if (open) "\u25BE Thinking" else "\u25B8 Thinking (tap to show)"
         }
         val content = Ui.text(act, "", 15f).apply { setTextIsSelectable(true) }
         val error = Ui.text(act, "", 13f, R.color.bad).apply { visibility = View.GONE }
@@ -231,6 +241,7 @@ class ChatPage(
                 Ui.color(act, R.color.surface), Ui.dp(act, 14).toFloat(),
                 Ui.color(act, R.color.stroke), Ui.dp(act, 1),
             )
+            addView(head)
             addView(reasoning)
             addView(content)
             addView(error)
@@ -239,7 +250,7 @@ class ChatPage(
             topMargin = Ui.dp(act, 8)
             marginEnd = Ui.dp(act, 24)
         })
-        return Bubble(reasoning, content, error)
+        return Bubble(head, reasoning, content, error)
     }
 
     private fun showContent(b: Bubble, text: String) {
@@ -251,7 +262,7 @@ class ChatPage(
 
     private fun showReasoning(b: Bubble, text: String) {
         val atEnd = !scroll.canScrollVertically(1)
-        b.reasoning.visibility = View.VISIBLE
+        b.head.visibility = View.VISIBLE
         b.reasoning.text = text
         if (b.content.text.toString().startsWith("Waiting for the bridge")) b.content.text = ""
         if (atEnd) pinToEnd()

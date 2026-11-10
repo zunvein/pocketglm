@@ -51,7 +51,7 @@ class SetupActivity : AppCompatActivity() {
             addView(Ui.gap(this@SetupActivity, 16))
             addView(option(
                 "Use my account",
-                "Unlocks the full model list. Sign in with email or GitHub. Google often refuses sign-in inside an app.",
+                "Unlocks the full model list. Sign in with Google, email or GitHub.",
                 signIn,
             ))
             addView(Ui.gap(this@SetupActivity, 12))

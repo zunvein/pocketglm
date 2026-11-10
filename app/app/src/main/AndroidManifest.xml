@@ -42,6 +42,16 @@
             android:exported="false"
             android:theme="@style/Theme.PocketGLM" />
 
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="dev.zunvein.pocketglm.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".BridgeService"
             android:exported="false"
