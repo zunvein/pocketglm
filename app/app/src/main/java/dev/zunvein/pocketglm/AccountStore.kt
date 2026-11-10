@@ -30,7 +30,10 @@ object AccountStore {
         val token: String,
         val expiresAtSec: Long?,
         val hint: String,
+        private val guest: Boolean = false,
     ) {
+        val isGuest: Boolean get() = guest
+
         fun isExpired(nowSec: Long = System.currentTimeMillis() / 1000): Boolean =
             expiresAtSec != null && expiresAtSec <= nowSec
 
@@ -42,6 +45,8 @@ object AccountStore {
         data class Added(val account: Account) : AddResult()
         object Duplicate : AddResult()
         data class Invalid(val reason: String) : AddResult()
+        /** chat.z.ai hands every visitor an anonymous token; it is not an account. */
+        object Guest : AddResult()
         data class StorageError(val reason: String) : AddResult()
     }
 
@@ -64,6 +69,13 @@ object AccountStore {
             val token = try { decrypt(blob) } catch (e: Exception) { null } ?: continue
             parse(token)?.let { out.add(it) }
         }
+        // Earlier builds could save the anonymous guest token as an account.
+        // Guests add nothing the bridge does not already have, so drop them.
+        if (out.any { it.isGuest }) {
+            val real = out.filter { !it.isGuest }
+            try { save(ctx, real) } catch (e: Exception) { /* retried on next list() */ }
+            return real
+        }
         return out
     }
 
@@ -75,6 +87,7 @@ object AccountStore {
         }
         val account = parse(token)
             ?: return AddResult.Invalid("The token payload could not be read.")
+        if (account.isGuest) return AddResult.Guest
         if (account.isExpired()) return AddResult.Invalid("This token has already expired.")
         val current = list(ctx)
         if (current.any { it.id == account.id }) return AddResult.Duplicate
@@ -111,7 +124,11 @@ object AccountStore {
             val hint = json.optString("email").takeIf { it.isNotEmpty() }?.let(::maskEmail)
                 ?: json.optString("id").takeIf { it.isNotEmpty() }?.let { "id ..." + it.takeLast(4) }
                 ?: "account"
-            Account(fingerprint(token), token, exp, hint)
+            val email = json.optString("email")
+            val isGuest = email.endsWith("@guest.com", ignoreCase = true) ||
+                json.optString("name").startsWith("guest", ignoreCase = true) ||
+                json.optString("username").startsWith("guest", ignoreCase = true)
+            Account(fingerprint(token), token, exp, hint, isGuest)
         } catch (e: Exception) {
             null
         }

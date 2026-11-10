@@ -145,3 +145,83 @@ func TestMintRouteRequiresAuth(t *testing.T) {
 		t.Fatalf("unauthenticated mint: status %d, want 401", rec.Code)
 	}
 }
+
+func withVerifyStub(t *testing.T, fn func(token string) (string, error)) {
+	t.Helper()
+	old := mintVerify
+	mintVerify = fn
+	t.Cleanup(func() { mintVerify = old })
+}
+
+func stubBatch(n int) func(log1, token string, nn int) (*devmint.Minted, error) {
+	return func(log1, token string, nn int) (*devmint.Minted, error) {
+		toks := make([]string, n)
+		for i := range toks {
+			toks[i] = "m-" + string(rune('a'+i))
+		}
+		return &devmint.Minted{Genuine: token, Tokens: toks}, nil
+	}
+}
+
+func TestMintVerifyOkSpendsOneProbeAndPoolsTheRest(t *testing.T) {
+	attachProdSchemaDB(t)
+	withMintStub(t, stubBatch(5))
+	calls := 0
+	withVerifyStub(t, func(string) (string, error) { calls++; return "payload", nil })
+
+	rec := postMint(t, `{"log1":"L","token":"genuine","n":5,"verify":true}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"ok"`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("probes spent = %d, want 1", calls)
+	}
+	// genuine + (5 minted - 1 probe)
+	if got := globalDBState.tokenCount(); got != 5 {
+		t.Fatalf("pool = %d, want 5", got)
+	}
+}
+
+func TestMintVerifyRejectedDropsTheBatchKeepsGenuine(t *testing.T) {
+	attachProdSchemaDB(t)
+	withMintStub(t, stubBatch(5))
+	withVerifyStub(t, func(string) (string, error) { return "", nil })
+
+	rec := postMint(t, `{"log1":"L","token":"genuine","n":5,"verify":true}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"rejected"`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := globalDBState.tokenCount(); got != 0 {
+		t.Fatalf("pool = %d, want 0 (batch dropped, genuine spent on the diagnosis probe)", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"genuine":"rejected"`) {
+		t.Fatalf("genuine verdict missing: %s", rec.Body.String())
+	}
+}
+
+func TestMintVerifyInconclusiveStillPoolsBatch(t *testing.T) {
+	attachProdSchemaDB(t)
+	withMintStub(t, stubBatch(4))
+	withVerifyStub(t, func(string) (string, error) { return "", errors.New("network down") })
+
+	rec := postMint(t, `{"log1":"L","token":"genuine","n":4,"verify":true}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"inconclusive"`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	// everything errored: nothing was spent for sure, so everything is pooled
+	// except the 2 minted probes that were attempted
+	if got := globalDBState.tokenCount(); got != 3 {
+		t.Fatalf("pool = %d, want 3 (genuine + 4 minted - 2 probes)", got)
+	}
+}
+
+func TestMintWithoutVerifyNeverCallsAliyun(t *testing.T) {
+	attachProdSchemaDB(t)
+	withMintStub(t, stubBatch(3))
+	withVerifyStub(t, func(string) (string, error) { t.Fatal("verify called"); return "", nil })
+
+	rec := postMint(t, `{"log1":"L","token":"genuine","n":3}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"skipped"`) {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

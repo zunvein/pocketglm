@@ -119,6 +119,7 @@ class AccountsActivity : Activity() {
                 val msg = when (val r = AccountStore.add(this, input.text.toString())) {
                     is AccountStore.AddResult.Added -> "Account saved (${r.account.hint})"
                     AccountStore.AddResult.Duplicate -> "That account is already saved"
+                    AccountStore.AddResult.Guest -> "That is a guest token, not a signed-in account."
                     is AccountStore.AddResult.Invalid -> r.reason
                     is AccountStore.AddResult.StorageError -> "Could not store the token securely: ${r.reason}"
                 }

@@ -24,9 +24,17 @@ import (
 //
 //	{"log1": "<Log1 response body or bare DeviceConfig>",
 //	 "token": "<the genuine device token>",
-//	 "n": 200}
+//	 "n": 200,
+//	 "verify": true}
 //
-// -> {"inserted": 201, "minted": 200, "tokenCount": 204}
+// -> {"inserted": 201, "minted": 200, "tokenCount": 204, "verified": "ok"}
+//
+// With "verify" the bridge spends up to two of the freshly minted tokens on a
+// real Aliyun verification BEFORE inserting the rest. If Aliyun rejects them,
+// the minted batch is dropped (and the genuine token is probed once to tell
+// "minting is wrong" from "this device is rejected") so a bad batch can never
+// fill the pool with tokens that every chat request then burns through (a
+// failing request burns up to 5). "verified" is one of ok | rejected | inconclusive | skipped.
 
 const (
 	mintMaxN         = 1000
@@ -37,10 +45,48 @@ const (
 // captured vectors.
 var mintFromHarvest = devmint.MintFromHarvest
 
+// mintVerify spends one token on a full Aliyun round trip (a seam for tests).
+// It returns the final payload, empty when Aliyun rejected the token.
+var mintVerify = tryCompute
+
+// mintVerifyProbes is how many minted tokens a verification may spend.
+const mintVerifyProbes = 2
+
 type mintRequest struct {
-	Log1  string `json:"log1"`
-	Token string `json:"token"`
-	N     int    `json:"n"`
+	Log1   string `json:"log1"`
+	Token  string `json:"token"`
+	N      int    `json:"n"`
+	Verify bool   `json:"verify"`
+}
+
+// verifyMinted checks the batch against Aliyun with up to mintVerifyProbes
+// tokens. It returns the verdict plus how many tokens it consumed.
+//
+//	ok           at least one probe was accepted
+//	rejected     every probe got an answer and Aliyun refused all of them
+//	inconclusive no probe got a clean answer (network trouble, etc.)
+func verifyMinted(tokens []string) (string, int) {
+	probes := len(tokens)
+	if probes > mintVerifyProbes {
+		probes = mintVerifyProbes
+	}
+	rejected, errored := 0, 0
+	for i := 0; i < probes; i++ {
+		payload, err := mintVerify(tokens[i])
+		switch {
+		case err != nil:
+			errored++
+			logError("mint: verify probe errored: " + err.Error())
+		case payload != "":
+			return "ok", i + 1
+		default:
+			rejected++
+		}
+	}
+	if rejected > 0 && errored == 0 {
+		return "rejected", probes
+	}
+	return "inconclusive", probes
 }
 
 func mintHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +135,36 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verdict, genuineVerdict := "skipped", "skipped"
+	genuineSpent := false
+	if req.Verify && len(minted.Tokens) > 0 {
+		var used int
+		verdict, used = verifyMinted(minted.Tokens)
+		if verdict == "rejected" {
+			logError(fmt.Sprintf("mint: Aliyun rejected %d probe(s) of the minted batch; dropping it", used))
+			minted.Tokens = nil
+			// Diagnosis: does Aliyun accept the browser's own token? If yes the
+			// minting is at fault; if no, this device's fingerprint is. The
+			// probe spends that token, which is fine: a rejected batch means
+			// the visit has nothing else to offer anyway.
+			genuineVerdict = "inconclusive"
+			if payload, err := mintVerify(minted.Genuine); err != nil {
+				logError("mint: genuine probe errored: " + err.Error())
+			} else if payload != "" {
+				genuineVerdict, genuineSpent = "ok", true
+			} else {
+				genuineVerdict, genuineSpent = "rejected", true
+			}
+		} else {
+			minted.Tokens = minted.Tokens[used:]
+		}
+		logInfo("mint: " + minted.Layout + " minted=" + verdict + " genuine=" + genuineVerdict)
+	}
+
 	all := make([]string, 0, 1+len(minted.Tokens))
-	all = append(all, minted.Genuine)
+	if !genuineSpent {
+		all = append(all, minted.Genuine)
+	}
 	all = append(all, minted.Tokens...)
 
 	if err := insertTokens(all); err != nil {
@@ -102,11 +176,13 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	invalidateTokenCount()
 
-	logInfo(fmt.Sprintf("mint: inserted %d device tokens (1 genuine + %d minted)", len(all), len(minted.Tokens)))
+	logInfo(fmt.Sprintf("mint: inserted %d device tokens (%d minted), minted=%s genuine=%s", len(all), len(minted.Tokens), verdict, genuineVerdict))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"inserted":   len(all),
 		"minted":     len(minted.Tokens),
 		"tokenCount": globalDBState.tokenCount(),
+		"verified":   verdict,
+		"genuine":    genuineVerdict,
 	})
 }
 

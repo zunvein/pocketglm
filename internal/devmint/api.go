@@ -95,6 +95,20 @@ func ParseHarvest(log1, token string) (DeviceSession, *PayloadTemplate, error) {
 	if err != nil {
 		return zero, nil, err
 	}
+	// The minting index map (42=ip, 43=log, 72=init, 74=now, 87=serverTs) was
+	// derived from desktop captures. A browser build with a different field
+	// layout would get its wrong slots overwritten and mint tokens Aliyun
+	// rejects, so check the genuine token against the session first.
+	if err := checkLayout(&session, tpl.fields); err != nil {
+		return zero, nil, err
+	}
+	// The gap between initTime and serverTs is a per-session fact: read it
+	// from the genuine payload instead of assuming the desktop value.
+	if init, perr := strconv.ParseInt(tpl.fields[idxInitTime], 10, 64); perr == nil {
+		if gap := session.ServerTs - init; gap > 0 && gap < 120_000 {
+			session.InitTime = init
+		}
+	}
 	// The GatherCost (tC) is a per-SESSION constant; take it from the token
 	// the SDK itself produced rather than inventing one.
 	if raw, derr := base64.StdEncoding.DecodeString(token); derr == nil {
@@ -111,6 +125,7 @@ func ParseHarvest(log1, token string) (DeviceSession, *PayloadTemplate, error) {
 type Minted struct {
 	Genuine string   // the browser's own token (valid on its own)
 	Tokens  []string // n additional tokens bound to the same session
+	Layout  string   // value-free harvest description for logs
 }
 
 // MintFromHarvest validates a browser harvest and mints n further tokens.
@@ -123,7 +138,7 @@ func MintFromHarvest(log1, token string, n int) (*Minted, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &Minted{Genuine: strings.TrimSpace(token)}
+	out := &Minted{Genuine: strings.TrimSpace(token), Layout: LayoutSummary(tpl)}
 	if n == 0 {
 		return out, nil
 	}
@@ -133,4 +148,31 @@ func MintFromHarvest(log1, token string, n int) (*Minted, error) {
 	}
 	out.Tokens = toks
 	return out, nil
+}
+
+// checkLayout verifies the slots minting rewrites really hold what the index
+// map says they do, using the session as ground truth. The error names slots
+// only, never their values.
+func checkLayout(sess *DeviceSession, f []string) error {
+	if len(f) <= idxServerTs {
+		return fmt.Errorf("template layout differs: %d fields, need more than %d", len(f), idxServerTs)
+	}
+	if f[idxIP] != sess.IP {
+		return fmt.Errorf("template layout differs: slot %d is not the device IP (%d fields)", idxIP, len(f))
+	}
+	if f[idxServerTs] != strconv.FormatInt(sess.ServerTs, 10) {
+		return fmt.Errorf("template layout differs: slot %d is not the server timestamp (%d fields)", idxServerTs, len(f))
+	}
+	entries := strings.Split(f[idxLog], "|")
+	if len(entries) < 2 ||
+		!strings.HasPrefix(entries[len(entries)-2], logEntry93+"-") ||
+		!strings.HasPrefix(entries[len(entries)-1], logEntry94+"-") {
+		return fmt.Errorf("template layout differs: slot %d does not end with probe entries 93/94 (%d fields)", idxLog, len(f))
+	}
+	return nil
+}
+
+// LayoutSummary is a value-free description of a harvest for logs.
+func LayoutSummary(tpl *PayloadTemplate) string {
+	return fmt.Sprintf("fields=%d", len(tpl.fields))
 }

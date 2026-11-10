@@ -171,7 +171,19 @@ class TokenFarmActivity : Activity() {
         if (log1 != null && n > 0) {
             when (val r = MintClient.mint(ApiKeyStore.get(ctx), log1, token, n)) {
                 is MintClient.Outcome.Ok -> {
-                    log("Minted a batch: ${r.inserted} tokens added, pool now ${r.poolSize}")
+                    when (r.minted) {
+                        "rejected" -> {
+                            val why = when (r.genuine) {
+                                "ok" -> "Aliyun accepts this phone's own token but refuses the minted ones, so the minting does not match this phone's browser."
+                                "rejected" -> "Aliyun refuses even this phone's own token, so the phone's browser is not trusted."
+                                else -> "Aliyun refused the minted tokens and the check on the phone's own token was inconclusive."
+                            }
+                            log("Batch NOT added. $why Pool: ${r.poolSize}")
+                            return false
+                        }
+                        "ok" -> log("Minted batch verified by Aliyun: ${r.inserted} tokens added, pool now ${r.poolSize}")
+                        else -> log("Minted batch added but not fully verified (${r.minted}): ${r.inserted} tokens, pool now ${r.poolSize}")
+                    }
                     return true
                 }
                 is MintClient.Outcome.NoAnswer -> {
