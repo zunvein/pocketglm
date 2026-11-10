@@ -1,91 +1,67 @@
 name: build-apk
-
-on:
+true:
   push:
-    branches: [main]
-  workflow_dispatch:
-
+    branches:
+    - main
+  workflow_dispatch: null
 jobs:
   bridge:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+    - name: Vet + unit tests
+      run: 'go vet ./...
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
+        go test ./internal/... ./cmd/...
 
-      - name: Vet + unit tests
-        run: |
-          go vet ./...
-          go test ./internal/... ./cmd/...
+        '
+    - name: Cross-compile bridge (android/arm64)
+      env:
+        CGO_ENABLED: '0'
+      run: 'GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/zai-smoke
+        .
 
-      - name: Cross-compile bridge (android/arm64)
-        env:
-          CGO_ENABLED: "0"
-        run: |
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/zai-smoke .
-          GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/assets/bridge/zai-api-android-arm64 .
-          file app/app/src/main/assets/bridge/zai-api-android-arm64
+        GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o app/app/src/main/assets/bridge/zai-api-android-arm64
+        .
 
-      - name: Smoke test (linux build, same code)
-        run: |
-          go build -o /tmp/zai-smoke .
-          python3 - <<'PY'
-          import sqlite3
-          db = sqlite3.connect('tokens.sqlite')
-          db.execute('CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL)')
-          db.commit()
-          PY
-          /tmp/zai-smoke & BPID=$!
-          sleep 3
-          if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: proses mati duluan"; exit 1; fi
-          curl -sf --max-time 5 http://127.0.0.1:3001/health >/dev/null && echo "smoke OK: alive + /health respond" || { echo "smoke FAIL: /health gak respond"; exit 1; }
-          kill $BPID 2>/dev/null || true
+        file app/app/src/main/assets/bridge/zai-api-android-arm64
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: zai-api-android-arm64
-          path: app/app/src/main/assets/bridge/zai-api-android-arm64
-          retention-days: 30
+        '
+    - name: Smoke test (linux build, same code)
+      run: 'go build -o /tmp/zai-smoke .
 
-  apk:
-    runs-on: ubuntu-latest
-    needs: bridge
-    steps:
-      - uses: actions/checkout@v4
+        python3 - <<''PY''
 
-      # Pull the bridge artifact built (and smoke-tested) by the bridge job
-      - uses: actions/download-artifact@v4
-        with:
-          name: zai-api-android-arm64
-          path: app/app/src/main/assets/bridge/
+        import sqlite3
 
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+        db = sqlite3.connect(''tokens.sqlite'')
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          build-root-directory: app
+        db.execute(''CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        token TEXT NOT NULL)'')
 
-      - name: Build debug APK (stable CI signing)
-        working-directory: app
-        env:
-          POCKETGLM_KEYSTORE_B64: ${{ secrets.POCKETGLM_KEYSTORE_B64 }}
-          POCKETGLM_KEYSTORE_PASSWORD: ${{ secrets.POCKETGLM_KEYSTORE_PASSWORD }}
-        run: |
-          [ -n "$POCKETGLM_KEYSTORE_B64" ] || { echo "missing keystore secret"; exit 1; }
-          gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx2g"
+        db.commit()
 
-      - name: Report artifact
-        working-directory: app
-        run: ls -la app/build/outputs/apk/debug/
+        PY
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: PocketGLM-debug-APK
-          path: app/app/build/outputs/apk/debug/*.apk
-          retention-days: 30
+        /tmp/zai-smoke & BPID=$!
+
+        sleep 3
+
+        if ! kill -0 $BPID 2>/dev/null; then echo "smoke FAIL: proses mati duluan";
+        exit 1; fi
+
+        curl -sf --max-time 5 http://127.0.0.1:3001/health >/dev/null && echo "smoke
+        OK: alive + /health respond" || { echo "smoke FAIL: /health gak respond";
+        exit 1; }
+
+        kill $BPID 2>/dev/null || true
+
+        '
+    - uses: actions/upload-artifact@v4
+      with:
+        name: zai-api-android-arm64
+        path: app/app/src/main/assets/bridge/zai-api-android-arm64
+        retention-days: 30
