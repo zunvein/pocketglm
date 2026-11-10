@@ -9,7 +9,10 @@ import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.util.TypedValue
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
@@ -113,6 +116,28 @@ object Ui {
             setOnClickListener { sw.toggle() }
         }
         return row to sw
+    }
+
+    fun input(ctx: Context, hint: String): EditText = EditText(ctx).apply {
+        this.hint = hint
+        setHintTextColor(color(ctx, R.color.textDim))
+        setTextColor(color(ctx, R.color.text))
+        textSize = 15f
+        val p = dp(ctx, 12)
+        setPadding(p, p, p, p)
+        background = shape(color(ctx, R.color.surfaceAlt), dp(ctx, 12).toFloat())
+    }
+
+    fun iconButton(ctx: Context, resId: Int, desc: String, tintId: Int): ImageView = ImageView(ctx).apply {
+        setImageResource(resId)
+        setColorFilter(color(ctx, tintId))
+        contentDescription = desc
+        val p = dp(ctx, 8)
+        setPadding(p, p, p, p)
+        val tv = TypedValue()
+        ctx.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
+        if (tv.resourceId != 0) setBackgroundResource(tv.resourceId)
+        isClickable = true
     }
 
     fun mono2(ctx: Context): TextView = mono(ctx).apply {

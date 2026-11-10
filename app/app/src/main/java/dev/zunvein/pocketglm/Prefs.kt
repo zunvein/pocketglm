@@ -25,4 +25,12 @@ object Prefs {
 
     fun bgStatus(ctx: Context): String = p(ctx).getString("bg_status", "") ?: ""
     fun setBgStatus(ctx: Context, s: String) = p(ctx).edit().putString("bg_status", s).apply()
+
+    /** The first-run choice (account or guest) has been made. */
+    fun setupDone(ctx: Context) = p(ctx).getBoolean("setup_done", false)
+    fun setSetupDone(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("setup_done", on).apply()
+
+    /** Model used by the in-app chat test. */
+    fun chatModel(ctx: Context): String = p(ctx).getString("chat_model", null) ?: "glm-5.2"
+    fun setChatModel(ctx: Context, m: String) = p(ctx).edit().putString("chat_model", m).apply()
 }

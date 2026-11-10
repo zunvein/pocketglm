@@ -26,9 +26,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Four tabs over plain views (no Compose, no Material): Home (bridge + token
- * supply), API (endpoint + key), Accounts, Logs. Colors come from the
- * day/night resources, so dark mode follows the system.
+ * Five tabs over plain views (no Compose, no Material): Home (bridge + token
+ * supply), Chat (test box), API (endpoint + key), Accounts, Logs. Colors come
+ * from the day/night resources, so dark mode follows the system.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -43,6 +43,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var pages: List<View>
     private lateinit var tabLabels: List<TextView>
+    private lateinit var tabIcons: List<android.widget.ImageView>
+    private lateinit var chatPage: ChatPage
+    private var setupShown = false
+    private val emailShown = HashSet<String>()
 
     // Home
     private lateinit var statusPill: TextView
@@ -75,22 +79,38 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        pages = listOf(buildHome(), buildApi(), buildAccounts(), buildLogs())
+        chatPage = ChatPage(this, scope) { health }
+        pages = listOf(buildHome(), chatPage.view, buildApi(), buildAccounts(), buildLogs())
         val content = FrameLayout(this).apply { pages.forEach { addView(it) } }
 
-        val names = listOf("Home", "API", "Accounts", "Logs")
-        tabLabels = names.mapIndexed { i, n ->
-            Ui.text(this, n, 13f, R.color.textDim, true).apply {
-                gravity = Gravity.CENTER
-                minimumHeight = Ui.dp(this@MainActivity, 56)
-                setOnClickListener { selectTab(i) }
-            }
-        }
+        val names = listOf("Home", "Chat", "API", "Accounts", "Logs")
+        val icons = listOf(R.drawable.ic_home, R.drawable.ic_chat, R.drawable.ic_code, R.drawable.ic_person, R.drawable.ic_logs)
+        val labels = ArrayList<TextView>()
+        val iconViews = ArrayList<android.widget.ImageView>()
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(Ui.color(this@MainActivity, R.color.surface))
-            tabLabels.forEach { addView(it, LinearLayout.LayoutParams(0, Ui.WRAP, 1f)) }
+            names.forEachIndexed { i, n ->
+                val icon = android.widget.ImageView(this@MainActivity).apply {
+                    setImageResource(icons[i])
+                    contentDescription = null
+                }
+                val label = Ui.text(this@MainActivity, n, 11f, R.color.textDim, true).apply { gravity = Gravity.CENTER }
+                labels.add(label); iconViews.add(icon)
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    minimumHeight = Ui.dp(this@MainActivity, 60)
+                    contentDescription = n
+                    isClickable = true
+                    addView(icon, LinearLayout.LayoutParams(Ui.dp(this@MainActivity, 24), Ui.dp(this@MainActivity, 24)))
+                    addView(label)
+                    setOnClickListener { selectTab(i) }
+                }, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
+            }
         }
+        tabLabels = labels
+        tabIcons = iconViews
         val divider = View(this).apply { setBackgroundColor(Ui.color(this@MainActivity, R.color.stroke)) }
 
         setContentView(LinearLayout(this).apply {
@@ -110,10 +130,13 @@ class MainActivity : AppCompatActivity() {
         tab = i
         pages.forEachIndexed { idx, v -> v.visibility = if (idx == i) View.VISIBLE else View.GONE }
         tabLabels.forEachIndexed { idx, t ->
-            t.setTextColor(Ui.color(this, if (idx == i) R.color.accent else R.color.textDim))
+            val c = Ui.color(this, if (idx == i) R.color.accent else R.color.textDim)
+            t.setTextColor(c)
+            tabIcons[idx].setColorFilter(c)
         }
-        if (i == 2) renderAccounts()
-        if (i == 3) refreshLogs()
+        if (i == 1) chatPage.onShown()
+        if (i == 3) renderAccounts()
+        if (i == 4) refreshLogs()
     }
 
     private fun page(vararg views: View): View {
@@ -480,16 +503,32 @@ class MainActivity : AppCompatActivity() {
         }
         val fmt = SimpleDateFormat("d MMM yyyy HH:mm", Locale.getDefault())
         accounts.forEachIndexed { i, a ->
-            if (i > 0) accountList.addView(Ui.gap(this, 12))
+            if (i > 0) accountList.addView(Ui.gap(this, 16))
             val exp = a.expiresAtSec?.let {
                 if (a.isExpired()) "expired" else "expires " + fmt.format(Date(it * 1000))
             } ?: "no expiry"
             val pill = if (a.isExpired()) Ui.pill(this, "Expired", R.color.bad) else Ui.pill(this, "Active", R.color.good)
-            accountList.addView(row(Ui.text(this, a.hint, 15f, R.color.text, true) to 1f, pill to 0f))
+            val shown = a.id in emailShown && a.email.isNotEmpty()
+            val title = Ui.text(this, if (shown) a.email else a.hint, 15f, R.color.text, true).apply {
+                setTextIsSelectable(shown)
+            }
+            val header = row(title to 1f)
+            if (a.email.isNotEmpty()) {
+                // Tap to reveal or hide the full address; it is masked by default.
+                header.addView(Ui.iconButton(this, R.drawable.ic_eye, if (shown) "Hide email" else "Show email", if (shown) R.color.accent else R.color.textDim).apply {
+                    setOnClickListener {
+                        if (a.id in emailShown) emailShown.remove(a.id) else emailShown.add(a.id)
+                        renderAccounts()
+                    }
+                }, LinearLayout.LayoutParams(Ui.dp(this, 40), Ui.dp(this, 40)))
+            }
+            header.addView(pill, LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP).apply { marginStart = Ui.dp(this@MainActivity, 8) })
+            accountList.addView(header)
             accountList.addView(Ui.mono(this).apply { text = "${a.masked()}\n$exp"; setTextIsSelectable(false) })
-            accountList.addView(Ui.button(this, "Remove", Ui.Kind.TEXT).apply {
-                setOnClickListener { confirmRemove(a) }
-            })
+            accountList.addView(buttonRow(
+                Ui.button(this, "Copy token", Ui.Kind.TONAL).apply { setOnClickListener { AccountDialogs.confirmCopyToken(this@MainActivity, a) } },
+                Ui.button(this, "Remove", Ui.Kind.TEXT).apply { setOnClickListener { confirmRemove(a) } },
+            ))
         }
     }
 
@@ -502,29 +541,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun promptPaste() {
-        val input = EditText(this).apply {
-            hint = "eyJ..."
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            minLines = 3
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Paste a Z.AI token")
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val msg = when (val r = AccountStore.add(this, input.text.toString())) {
-                    is AccountStore.AddResult.Added -> "Account saved (${r.account.hint})"
-                    AccountStore.AddResult.Duplicate -> "That account is already saved"
-                    AccountStore.AddResult.Guest -> "That is a guest token, not a signed-in account."
-                    is AccountStore.AddResult.Invalid -> r.reason
-                    is AccountStore.AddResult.StorageError -> "Could not store the token securely: ${r.reason}"
-                }
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-                renderAccounts()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
+    private fun promptPaste() = AccountDialogs.promptPaste(this) { renderAccounts() }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -578,7 +595,7 @@ class MainActivity : AppCompatActivity() {
                 val h = withContext(Dispatchers.IO) { BridgeClient.health() }
                 health = h
                 renderHome()
-                if (tab == 3) refreshLogs()
+                if (tab == 4) refreshLogs()
                 maybeTopUp()
                 delay(2000)
             }
@@ -606,6 +623,15 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        if (!Prefs.setupDone(this)) {
+            if (AccountStore.list(this).isNotEmpty()) {
+                Prefs.setSetupDone(this, true)
+            } else if (!setupShown) {
+                setupShown = true
+                startActivity(Intent(this, SetupActivity::class.java))
+            }
+        }
+        if (tab == 3) renderAccounts()
         renderApi()
         renderHome()
         startPolling()
@@ -618,6 +644,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        chatPage.shutdown()
         scope.cancel()
         // The bridge keeps running when the app closes; stopping it is an explicit action.
         super.onDestroy()

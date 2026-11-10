@@ -31,6 +31,8 @@ object AccountStore {
         val expiresAtSec: Long?,
         val hint: String,
         private val guest: Boolean = false,
+        /** The full address from the token; empty when the token carries none. */
+        val email: String = "",
     ) {
         val isGuest: Boolean get() = guest
 
@@ -128,7 +130,7 @@ object AccountStore {
             val isGuest = email.endsWith("@guest.com", ignoreCase = true) ||
                 json.optString("name").startsWith("guest", ignoreCase = true) ||
                 json.optString("username").startsWith("guest", ignoreCase = true)
-            Account(fingerprint(token), token, exp, hint, isGuest)
+            Account(fingerprint(token), token, exp, hint, isGuest, email)
         } catch (e: Exception) {
             null
         }
