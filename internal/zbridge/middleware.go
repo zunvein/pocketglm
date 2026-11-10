@@ -4,6 +4,7 @@ import (
     "encoding/json"
     "net/http"
     "strings"
+    "time"
 )
 
 func toJSON(v interface{}) string {
@@ -64,19 +65,25 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
             next(w, r)
             return
         }
-        if !checkAuth(r) {
-            w.Header().Set("Content-Type", "application/json")
-            w.WriteHeader(401)
-            json.NewEncoder(w).Encode(map[string]interface{}{
-                "type": "error",
-                "error": map[string]interface{}{
-                    "type":    "authentication_error",
-                    "message": "Invalid or missing authentication token",
-                },
-            })
+        provided := requestKey(r)
+        if isOwnerKey(provided) {
+            next(w, r)
             return
         }
-        next(w, r)
+        if isFriendKey(provided) {
+            if ownerOnlyPath(r.URL.Path) {
+                writeAuthError(w, 403, "permission_error", "This key can only use the chat API")
+                return
+            }
+            if !friendAllow(provided, time.Now()) {
+                w.Header().Set("Retry-After", "60")
+                writeAuthError(w, 429, "rate_limit_error", "Too many requests for this key, try again in a minute")
+                return
+            }
+            next(w, r)
+            return
+        }
+        writeAuthError(w, 401, "authentication_error", "Invalid or missing authentication token")
     }
 }
 

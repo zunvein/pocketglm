@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var curlText: TextView
     private lateinit var testResult: TextView
     private lateinit var showKeyButton: android.widget.Button
+    private lateinit var friendBox: LinearLayout
     private lateinit var linkPill: TextView
     private lateinit var linkText: TextView
     private lateinit var linkSwitch: SwitchCompat
@@ -435,7 +436,21 @@ class MainActivity : AppCompatActivity() {
             addView(Ui.gap(this@MainActivity, 8))
             addView(testResult)
         }
-        return page(endpoints, linkCard, keyCard, example)
+        friendBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val friendCard = Ui.card(this).apply {
+            addView(Ui.text(this@MainActivity, "Friend keys", 18f, R.color.text, true))
+            addView(Ui.gap(this@MainActivity, 4))
+            addView(Ui.text(this@MainActivity,
+                "One key per person. A friend key can use the chat API only, and the bridge allows each one 60 requests a minute. Revoke a key to cut someone off.",
+                13f, R.color.textDim))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(friendBox)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(Ui.button(this@MainActivity, "New friend key", Ui.Kind.PRIMARY).apply {
+                setOnClickListener { promptNewFriend() }
+            })
+        }
+        return page(endpoints, linkCard, keyCard, friendCard, example)
     }
 
     /** First non-loopback IPv4 address of the active network (Wi-Fi LAN IP). */
@@ -457,7 +472,73 @@ class MainActivity : AppCompatActivity() {
             "  -d '{\"model\":\"glm-5.2\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'"
     }
 
+    private fun renderFriends() {
+        friendBox.removeAllViews()
+        val friends = FriendKeys.list(this)
+        if (friends.isEmpty()) {
+            friendBox.addView(Ui.text(this, "No friend keys yet.", 14f, R.color.textDim))
+            return
+        }
+        friends.forEachIndexed { i, f ->
+            if (i > 0) friendBox.addView(Ui.gap(this, 12))
+            friendBox.addView(Ui.text(this, f.name, 15f, R.color.text, true))
+            friendBox.addView(Ui.mono(this).apply { text = AccountStore.mask(f.key) })
+            friendBox.addView(Ui.gap(this, 6))
+            friendBox.addView(buttonRow(
+                Ui.button(this, "Copy key", Ui.Kind.TONAL).apply {
+                    setOnClickListener { copyText("pocketglm-friend-key", f.key, "Key copied") }
+                },
+                Ui.button(this, "Revoke", Ui.Kind.DANGER).apply {
+                    setOnClickListener { confirmRevokeFriend(f) }
+                },
+            ))
+        }
+    }
+
+    private fun promptNewFriend() {
+        val pad = Ui.dp(this, 20)
+        val name = Ui.input(this, "Name, e.g. Budi").apply { setSingleLine() }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(name)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("New friend key")
+            .setView(box)
+            .setPositiveButton("Create") { _, _ ->
+                val f = FriendKeys.add(this, name.text.toString())
+                applyFriendChange("Key for ${f.name} created")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmRevokeFriend(f: FriendKeys.Friend) {
+        AlertDialog.Builder(this)
+            .setTitle("Revoke ${f.name}'s key?")
+            .setMessage("That key stops working right away and the bridge restarts.")
+            .setPositiveButton("Revoke") { _, _ ->
+                FriendKeys.remove(this, f.id)
+                applyFriendChange("Key revoked")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** The bridge reads AUTH_TOKEN only at start, so a running bridge restarts. */
+    private fun applyFriendChange(done: String) {
+        renderFriends()
+        if (isUp() || isStarting()) {
+            restartBridge()
+            Toast.makeText(this, "$done, restarting the bridge", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, done, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun renderApi() {
+        if (::friendBox.isInitialized) renderFriends()
         val key = ApiKeyStore.get(this)
         val ip = lanIp()
         val lan = ip ?: "<phone-ip>"
@@ -773,8 +854,8 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             val p = Ui.dp(this@MainActivity, 16)
             setPadding(p, p, p, p)
-            addView(buttonRow(share, copy), LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { bottomMargin = Ui.dp(this@MainActivity, 12) })
             addView(logText)
+            addView(buttonRow(share, copy), LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { topMargin = Ui.dp(this@MainActivity, 12) })
         }
         logsScroll = ScrollView(this).apply { addView(col) }
         return logsScroll

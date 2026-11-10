@@ -199,7 +199,7 @@ func TestMintVerifyRejectedDropsTheBatchKeepsGenuine(t *testing.T) {
 	}
 }
 
-func TestMintVerifyInconclusiveStillPoolsBatch(t *testing.T) {
+func TestMintVerifyInconclusiveDropsBatchKeepsGenuine(t *testing.T) {
 	attachProdSchemaDB(t)
 	withMintStub(t, stubBatch(4))
 	withVerifyStub(t, func(string) (string, error) { return "", errors.New("network down") })
@@ -208,10 +208,10 @@ func TestMintVerifyInconclusiveStillPoolsBatch(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"inconclusive"`) {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	// everything errored: nothing was spent for sure, so everything is pooled
-	// except the 2 minted probes that were attempted
-	if got := globalDBState.tokenCount(); got != 3 {
-		t.Fatalf("pool = %d, want 3 (genuine + 4 minted - 2 probes)", got)
+	// Aliyun never confirmed the batch, so none of it is pooled. Only the
+	// browser's own token goes in.
+	if got := globalDBState.tokenCount(); got != 1 {
+		t.Fatalf("pool = %d, want 1 (genuine only)", got)
 	}
 }
 

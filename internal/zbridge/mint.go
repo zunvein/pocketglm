@@ -155,6 +155,11 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 			} else {
 				genuineVerdict, genuineSpent = "rejected", true
 			}
+		} else if verdict == "inconclusive" {
+			// Aliyun did not confirm the batch, so none of it goes in the pool.
+			// The browser's own token is still kept.
+			logError("mint: batch not confirmed by Aliyun; dropping it, keeping the genuine token")
+			minted.Tokens = nil
 		} else {
 			minted.Tokens = minted.Tokens[used:]
 		}

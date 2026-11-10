@@ -7,6 +7,7 @@ import java.io.RandomAccessFile
 /** Hides anything credential-shaped before text leaves the app (clipboard, screen). */
 object Redact {
     private val pglKey = Regex("sk-pgl-[A-Za-z0-9]{8,}")
+    private val friendKey = Regex("pgl-friend-[A-Za-z0-9]{8,}")
     private val jwt = Regex("eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")
 
     fun text(ctx: Context, input: String): String {
@@ -14,6 +15,7 @@ object Redact {
         val key = ApiKeyStore.get(ctx)
         if (key.length >= 8) out = out.replace(key, AccountStore.mask(key))
         out = pglKey.replace(out) { AccountStore.mask(it.value) }
+        out = friendKey.replace(out) { AccountStore.mask(it.value) }
         out = jwt.replace(out) { AccountStore.mask(it.value) }
         return out
     }
