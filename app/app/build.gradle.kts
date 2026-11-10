@@ -20,6 +20,15 @@ android {
             isMinifyEnabled = false
         }
         debug {
+            // Shrink the debug APK too (it is the one that gets side-loaded
+            // over mobile data): R8 + resource shrinking. Rules live in
+            // proguard-rules.pro (JavascriptInterface methods are kept).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             // Stable CI signing: same keystore every build (uploaded as GHA
             // secrets) so Android sees every CI build as the same app.
             // Falls back to default debug signing locally on a dev box.

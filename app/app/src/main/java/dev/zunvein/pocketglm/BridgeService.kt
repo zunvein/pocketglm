@@ -31,6 +31,8 @@ class BridgeService : Service() {
     companion object {
         const val ACTION_START = "dev.zunvein.pocketglm.START"
         const val ACTION_STOP = "dev.zunvein.pocketglm.STOP"
+        /** Same as START, but any running bridge is replaced (new API key). */
+        const val ACTION_RESTART = "dev.zunvein.pocketglm.RESTART"
         const val CHANNEL_ID = "pocketglm_bridge"
         const val BINARY_NAME = "zai-api-android-arm64"
         const val NOTIFICATION_ID = 1
@@ -42,7 +44,7 @@ class BridgeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startBridge()
+            ACTION_START, ACTION_RESTART -> startBridge()
             ACTION_STOP -> stopBridge()
         }
         return START_NOT_STICKY
@@ -54,6 +56,17 @@ class BridgeService : Service() {
         Thread {
             val workDir = File(filesDir, "bridge").apply { mkdirs() }
             val logFile = File(workDir, "bridge.log")
+
+            // Replace a bridge that is already running (restart / double
+            // START): wait for it to exit so the port is free again.
+            bridgeProcess?.let { old ->
+                old.destroy()
+                try {
+                    old.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                } catch (ignored: InterruptedException) {
+                }
+                bridgeProcess = null
+            }
 
             // Boot guard: the bridge refuses to start without a token DB.
             try {
@@ -99,7 +112,11 @@ class BridgeService : Service() {
                 .directory(workDir)
                 .redirectErrorStream(true)
                 .redirectOutput(logFile)
-                .apply { environment()["ZAI_DNS"] = deviceDnsServers() }
+                .apply {
+                    environment()["ZAI_DNS"] = deviceDnsServers()
+                    // Clients must present this key; generated on first use.
+                    environment()["AUTH_TOKEN"] = ApiKeyStore.get(this@BridgeService)
+                }
                 .start()
             appendLog(workDir, "[app] spawned OK from ${bin.parent}")
             true
