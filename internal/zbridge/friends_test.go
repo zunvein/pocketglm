@@ -95,3 +95,37 @@ func TestFriendAllowWindowSlides(t *testing.T) {
 		t.Fatal("after the first hit ages out, a request should pass")
 	}
 }
+
+func TestPerKeyLimitOverridesTheDefault(t *testing.T) {
+	withAuthKeys(t)
+	t.Setenv("FRIEND_RATE_PER_MIN", "100")
+	t.Setenv("FRIEND_RATE_LIMITS", "friend-key-for-tests:2,other-key:50")
+	friendHits.Lock()
+	friendHits.m = map[string][]time.Time{}
+	friendHits.Unlock()
+
+	if got := friendLimitFor("friend-key-for-tests"); got != 2 {
+		t.Fatalf("per-key limit = %d, want 2", got)
+	}
+	if got := friendLimitFor("some-other-friend"); got != 100 {
+		t.Fatalf("key without an entry = %d, want the default 100", got)
+	}
+	for i := 1; i <= 2; i++ {
+		if got := authCall("/v1/models", "friend-key-for-tests"); got != 200 {
+			t.Fatalf("request %d: %d, want 200", i, got)
+		}
+	}
+	if got := authCall("/v1/models", "friend-key-for-tests"); got != 429 {
+		t.Fatalf("third request: %d, want 429 at the per-key limit", got)
+	}
+}
+
+func TestBadPerKeyLimitFallsBackToDefault(t *testing.T) {
+	t.Setenv("FRIEND_RATE_PER_MIN", "7")
+	t.Setenv("FRIEND_RATE_LIMITS", "k1:0,k2:abc,k3,:5")
+	for _, k := range []string{"k1", "k2", "k3"} {
+		if got := friendLimitFor(k); got != 7 {
+			t.Errorf("%s: limit = %d, want default 7", k, got)
+		}
+	}
+}

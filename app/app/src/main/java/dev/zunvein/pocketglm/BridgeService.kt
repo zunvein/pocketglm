@@ -150,6 +150,7 @@ class BridgeService : Service() {
                     environment()["ZAI_DNS"] = deviceDnsServers()
                     // Clients must present this key; generated on first use.
                     environment()["AUTH_TOKEN"] = FriendKeys.authTokenValue(this@BridgeService)
+                    FriendKeys.limitsValue(this@BridgeService).takeIf { it.isNotEmpty() }?.let { environment()["FRIEND_RATE_LIMITS"] = it }
                     // Signed-in Z.AI accounts (decrypted only here, in memory).
                     // Without any, the bridge keeps using its guest identity.
                     val accounts = AccountStore.tokensForBridge(this@BridgeService)

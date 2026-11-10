@@ -484,9 +484,14 @@ class MainActivity : AppCompatActivity() {
             friendBox.addView(Ui.text(this, f.name, 15f, R.color.text, true))
             friendBox.addView(Ui.mono(this).apply { text = AccountStore.mask(f.key) })
             friendBox.addView(Ui.gap(this, 6))
+            friendBox.addView(Ui.text(this, "Limit: ${f.perMin} requests a minute", 13f, R.color.textDim))
+            friendBox.addView(Ui.gap(this, 6))
             friendBox.addView(buttonRow(
                 Ui.button(this, "Copy key", Ui.Kind.TONAL).apply {
                     setOnClickListener { copyText("pocketglm-friend-key", f.key, "Key copied") }
+                },
+                Ui.button(this, "Limit", Ui.Kind.TONAL).apply {
+                    setOnClickListener { promptFriendLimit(f) }
                 },
                 Ui.button(this, "Revoke", Ui.Kind.DANGER).apply {
                     setOnClickListener { confirmRevokeFriend(f) }
@@ -509,6 +514,35 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Create") { _, _ ->
                 val f = FriendKeys.add(this, name.text.toString())
                 applyFriendChange("Key for ${f.name} created")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptFriendLimit(f: FriendKeys.Friend) {
+        val pad = Ui.dp(this, 20)
+        val input = Ui.input(this, "${FriendKeys.MIN_PER_MIN}-${FriendKeys.MAX_PER_MIN} requests a minute").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setSingleLine()
+            setText(f.perMin.toString())
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(Ui.text(this@MainActivity, "Requests a minute allowed for ${f.name}. Above this the bridge answers 429.", 13f, R.color.textDim))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Limit for ${f.name}")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val n = input.text.toString().trim().toIntOrNull()
+                if (n == null || !FriendKeys.setLimit(this, f.id, n)) {
+                    Toast.makeText(this, "Use a number from ${FriendKeys.MIN_PER_MIN} to ${FriendKeys.MAX_PER_MIN}", Toast.LENGTH_LONG).show()
+                } else {
+                    applyFriendChange("Limit saved")
+                }
             }
             .setNegativeButton("Cancel", null)
             .show()

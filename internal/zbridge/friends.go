@@ -67,10 +67,26 @@ func friendRatePerMin() int {
 	return defaultFriendRatePerMin
 }
 
-// friendAllow records one request for key and reports whether it is within the
-// per-minute limit. The key itself is only used as an in-memory map key.
+// friendLimitFor returns the per-minute limit for one friend key. The owner
+// sets it per key through FRIEND_RATE_LIMITS ("key:perMin,key:perMin"); a key
+// with no entry, or a bad one, gets the default.
+func friendLimitFor(key string) int {
+	for _, part := range strings.Split(os.Getenv("FRIEND_RATE_LIMITS"), ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(part), ":")
+		if !ok || k != key {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return friendRatePerMin()
+}
+
+// friendAllow records one request for key and reports whether it is within that
+// key's per-minute limit. The key itself is only used as an in-memory map key.
 func friendAllow(key string, now time.Time) bool {
-	limit := friendRatePerMin()
+	limit := friendLimitFor(key)
 	cutoff := now.Add(-time.Minute)
 	friendHits.Lock()
 	defer friendHits.Unlock()
