@@ -33,4 +33,8 @@ object Prefs {
     /** Model used by the in-app chat test. */
     fun chatModel(ctx: Context): String = p(ctx).getString("chat_model", null) ?: "glm-5.2"
     fun setChatModel(ctx: Context, m: String) = p(ctx).edit().putString("chat_model", m).apply()
+
+    /** The user wants the public link (ngrok) up whenever the bridge runs. */
+    fun publicLink(ctx: Context) = p(ctx).getBoolean("public_link", false)
+    fun setPublicLink(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("public_link", on).apply()
 }

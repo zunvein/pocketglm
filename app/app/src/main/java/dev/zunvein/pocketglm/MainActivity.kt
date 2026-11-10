@@ -20,6 +20,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import kotlinx.coroutines.*
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -67,6 +68,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var curlText: TextView
     private lateinit var testResult: TextView
     private lateinit var showKeyButton: android.widget.Button
+    private lateinit var linkPill: TextView
+    private lateinit var linkText: TextView
+    private lateinit var linkSwitch: SwitchCompat
+    private lateinit var linkCopy: android.widget.Button
+    private var linkStatus = TunnelClient.UNKNOWN
+    private var syncingLink = false
 
     // Accounts
     private lateinit var accountList: LinearLayout
@@ -354,6 +361,37 @@ class MainActivity : AppCompatActivity() {
             addView(Ui.gap(this@MainActivity, 8))
             addView(endpointText)
         }
+        linkPill = Ui.pill(this, "Not set up", R.color.textDim)
+        linkText = Ui.mono2(this)
+        linkCopy = Ui.button(this, "Copy link", Ui.Kind.TONAL).apply {
+            setOnClickListener {
+                val u = linkStatus.url
+                if (u.isNotEmpty()) copyText("pocketglm-link", u, "Link copied")
+            }
+        }
+        val linkSetup = Ui.button(this, "Set up", Ui.Kind.TONAL).apply { setOnClickListener { promptTunnelSetup() } }
+        val linkRemove = Ui.button(this, "Remove", Ui.Kind.TEXT).apply { setOnClickListener { confirmRemoveLink() } }
+        val (linkSwitchRow, sw) = Ui.switchRow(
+            this, "Share over the internet",
+            "Opens a public https link to this bridge",
+            Prefs.publicLink(this),
+        ) { on -> onLinkSwitch(on) }
+        linkSwitch = sw
+        val linkCard = Ui.card(this).apply {
+            val head = row(Ui.text(this@MainActivity, "Public link", 18f, R.color.text, true) to 1f)
+            head.addView(linkPill)
+            addView(head)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(linkSwitchRow)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(linkText)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(buttonRow(linkCopy, linkSetup, linkRemove))
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(Ui.text(this@MainActivity,
+                "Needs a free ngrok account (authtoken). Anyone who has the link and your API key can use your accounts, so give each friend the key only on purpose.",
+                12f, R.color.textDim))
+        }
         val keyCard = Ui.card(this).apply {
             addView(Ui.text(this@MainActivity, "API key", 18f, R.color.text, true))
             addView(Ui.gap(this@MainActivity, 8))
@@ -372,7 +410,7 @@ class MainActivity : AppCompatActivity() {
             addView(Ui.gap(this@MainActivity, 8))
             addView(testResult)
         }
-        return page(endpoints, keyCard, example)
+        return page(endpoints, linkCard, keyCard, example)
     }
 
     /** First non-loopback IPv4 address of the active network (Wi-Fi LAN IP). */
@@ -410,6 +448,143 @@ class MainActivity : AppCompatActivity() {
         keyText.text = if (keyShown) key else AccountStore.mask(key)
         showKeyButton.text = if (keyShown) "Hide" else "Show"
         curlText.text = curlText(if (keyShown) key else AccountStore.mask(key))
+        renderLink()
+    }
+
+    // ── Public link (ngrok) ──────────────────────────────────────────────
+
+    private fun renderLink() {
+        val configured = TunnelStore.isConfigured(this)
+        val s = linkStatus
+        syncingLink = true
+        linkSwitch.isChecked = Prefs.publicLink(this) && configured
+        syncingLink = false
+        linkCopy.visibility = if (s.online && s.url.isNotEmpty()) View.VISIBLE else View.GONE
+        val domain = TunnelStore.domain(this)
+        when {
+            !configured -> {
+                linkPill.setPill("Not set up", R.color.textDim)
+                linkText.text = "Tap Set up and paste your ngrok authtoken."
+            }
+            !health.up -> {
+                linkPill.setPill("Bridge stopped", R.color.textDim)
+                linkText.text = "Start the bridge on the Home tab to open the link."
+            }
+            !s.reachable -> {
+                linkPill.setPill("Checking", R.color.warn)
+                linkText.text = "Waiting for the bridge..."
+            }
+            s.online -> {
+                linkPill.setPill("Online", R.color.good)
+                linkText.text = s.url + "\n/v1 for OpenAI clients"
+            }
+            s.starting -> {
+                linkPill.setPill("Connecting", R.color.warn)
+                linkText.text = "Connecting to ngrok..."
+            }
+            s.error.isNotEmpty() && s.error != "stopped" -> {
+                linkPill.setPill("Failed", R.color.bad)
+                linkText.text = Redact.text(this, s.error)
+            }
+            !s.enabled -> {
+                linkPill.setPill("Restart needed", R.color.warn)
+                linkText.text = "Restart the bridge so it picks up the authtoken."
+            }
+            else -> {
+                linkPill.setPill("Off", R.color.textDim)
+                linkText.text = if (domain.isEmpty()) "Link is off. A random address is used each time."
+                else "Link is off. Address: https://$domain"
+            }
+        }
+    }
+
+    private fun onLinkSwitch(on: Boolean) {
+        if (syncingLink) return
+        if (!TunnelStore.isConfigured(this)) {
+            syncingLink = true; linkSwitch.isChecked = false; syncingLink = false
+            promptTunnelSetup()
+            return
+        }
+        Prefs.setPublicLink(this, on)
+        val key = ApiKeyStore.get(this)
+        scope.launch {
+            val err = withContext(Dispatchers.IO) { if (on) TunnelClient.start(key) else TunnelClient.stop(key) }
+            if (err != null) Toast.makeText(this@MainActivity, err, Toast.LENGTH_LONG).show()
+            linkStatus = withContext(Dispatchers.IO) { TunnelClient.status(key) }
+            renderLink()
+        }
+    }
+
+    private fun promptTunnelSetup() {
+        val pad = Ui.dp(this, 20)
+        val token = Ui.input(this, if (TunnelStore.isConfigured(this)) "Authtoken (leave empty to keep the saved one)" else "ngrok authtoken").apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine()
+        }
+        val domain = Ui.input(this, "Static domain, e.g. name.ngrok-free.app (optional)").apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+            setText(TunnelStore.domain(this@MainActivity))
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(Ui.text(this@MainActivity,
+                "Get both from dashboard.ngrok.com: Your Authtoken, and Domains (one free static domain). Without a domain the address changes every time.",
+                13f, R.color.textDim))
+            addView(Ui.gap(this@MainActivity, 12))
+            addView(token)
+            addView(Ui.gap(this@MainActivity, 8))
+            addView(domain)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Public link")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val t = token.text.toString().trim()
+                if (t.isEmpty() && !TunnelStore.isConfigured(this)) {
+                    Toast.makeText(this, "Paste your ngrok authtoken first", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                if (t.isNotEmpty() && !TunnelStore.setAuthtoken(this, t)) {
+                    Toast.makeText(this, "That does not look like an ngrok authtoken", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                if (!TunnelStore.setDomain(this, domain.text.toString())) {
+                    Toast.makeText(this, "Invalid domain. Use something like name.ngrok-free.app", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                Prefs.setPublicLink(this, true)
+                applyLinkChange("Saved")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun confirmRemoveLink() {
+        if (!TunnelStore.isConfigured(this)) return
+        AlertDialog.Builder(this)
+            .setTitle("Remove the public link setup?")
+            .setMessage("Your ngrok authtoken and domain are deleted from this phone.")
+            .setPositiveButton("Remove") { _, _ ->
+                TunnelStore.clear(this)
+                Prefs.setPublicLink(this, false)
+                applyLinkChange("Removed")
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** The bridge only reads the ngrok settings at start, so a running one restarts. */
+    private fun applyLinkChange(done: String) {
+        linkStatus = TunnelClient.UNKNOWN
+        renderLink()
+        if (isUp() || isStarting()) {
+            restartBridge()
+            Toast.makeText(this, "$done, restarting the bridge", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, done, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun copyText(label: String, text: String, toast: String) {
@@ -525,6 +700,7 @@ class MainActivity : AppCompatActivity() {
             header.addView(pill, LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP).apply { marginStart = Ui.dp(this@MainActivity, 8) })
             accountList.addView(header)
             accountList.addView(Ui.mono(this).apply { text = "${a.masked()}\n$exp"; setTextIsSelectable(false) })
+            accountList.addView(Ui.gap(this, 12))
             accountList.addView(buttonRow(
                 Ui.button(this, "Copy token", Ui.Kind.TONAL).apply { setOnClickListener { AccountDialogs.confirmCopyToken(this@MainActivity, a) } },
                 Ui.button(this, "Remove", Ui.Kind.TEXT).apply { setOnClickListener { confirmRemove(a) } },
@@ -594,6 +770,11 @@ class MainActivity : AppCompatActivity() {
             while (isActive) {
                 val h = withContext(Dispatchers.IO) { BridgeClient.health() }
                 health = h
+                linkStatus = if (h.up && TunnelStore.isConfigured(this@MainActivity)) {
+                    val key = ApiKeyStore.get(this@MainActivity)
+                    withContext(Dispatchers.IO) { TunnelClient.status(key) }
+                } else TunnelClient.UNKNOWN
+                renderLink()
                 renderHome()
                 if (tab == 4) refreshLogs()
                 maybeTopUp()

@@ -138,10 +138,6 @@ class ChatPage(
             Toast.makeText(act, "Start the bridge on the Home tab first.", Toast.LENGTH_SHORT).show()
             return
         }
-        if (h.warming) {
-            Toast.makeText(act, "The bridge is still warming up. Try again in a few seconds.", Toast.LENGTH_SHORT).show()
-            return
-        }
 
         input.setText("")
         if (emptyState.parent != null) bubbles.removeView(emptyState)

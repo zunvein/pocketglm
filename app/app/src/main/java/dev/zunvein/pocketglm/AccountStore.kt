@@ -1,17 +1,10 @@
 package dev.zunvein.pocketglm
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.KeyStore
 import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 /**
  * Z.AI account tokens (JWTs) the bridge may use instead of the guest
@@ -55,7 +48,6 @@ object AccountStore {
     private const val PREFS = "pocketglm_accounts"
     private const val LIST = "accounts"
     private const val KEY_ALIAS = "pocketglm_accounts_v1"
-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private val JWT_SHAPE = Regex("^eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$")
 
     fun mask(token: String): String =
@@ -157,35 +149,8 @@ object AccountStore {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    private fun key(): SecretKey {
-        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (ks.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        gen.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return gen.generateKey()
-    }
-
     /** iv(12) || ciphertext+tag, base64. */
-    private fun encrypt(plain: String): String {
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.ENCRYPT_MODE, key())
-        val ct = c.doFinal(plain.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(c.iv + ct, Base64.NO_WRAP)
-    }
+    private fun encrypt(plain: String): String = SecretBox.encrypt(KEY_ALIAS, plain)
 
-    private fun decrypt(blob: String): String {
-        val raw = Base64.decode(blob, Base64.NO_WRAP)
-        require(raw.size > 12 + 16) { "short blob" }
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, raw, 0, 12))
-        return String(c.doFinal(raw, 12, raw.size - 12), Charsets.UTF_8)
-    }
+    private fun decrypt(blob: String): String = SecretBox.decrypt(KEY_ALIAS, blob)
 }

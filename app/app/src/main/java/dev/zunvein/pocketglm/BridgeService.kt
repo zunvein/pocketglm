@@ -154,6 +154,13 @@ class BridgeService : Service() {
                     // Without any, the bridge keeps using its guest identity.
                     val accounts = AccountStore.tokensForBridge(this@BridgeService)
                     if (accounts.isNotEmpty()) environment()["ZAI_TOKENS"] = accounts
+                    // Public link (ngrok). The authtoken stays in memory here and is
+                    // never logged; without it the bridge keeps the tunnel inert.
+                    TunnelStore.authtoken(this@BridgeService)?.let { tok ->
+                        environment()["NGROK_AUTHTOKEN"] = tok
+                        environment()["NGROK_URL"] = TunnelStore.bridgeUrl(this@BridgeService)
+                        environment()["NGROK_AUTOSTART"] = if (Prefs.publicLink(this@BridgeService)) "1" else "0"
+                    }
                 }
                 .start()
             appendLog(workDir, "[app] spawned OK from ${bin.parent} (accounts: ${AccountStore.list(this).count { !it.isExpired() }})")

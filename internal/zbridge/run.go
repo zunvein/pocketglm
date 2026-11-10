@@ -53,6 +53,11 @@ func NewHandler() http.Handler {
     mux.HandleFunc("/captcha", authMiddleware(captchaHandler))
     // Batch-mint device tokens from one browser harvest (Android app).
     mux.HandleFunc("/admin/mint", authMiddleware(mintHandler))
+    // Public-link tunnel (ngrok agent embedded). Start/stop/report the
+    // endpoint without restarting the bridge; inert without NGROK_AUTHTOKEN.
+    mux.HandleFunc("/admin/tunnel/status", authMiddleware(tunnelStatusHandler))
+    mux.HandleFunc("/admin/tunnel/start", authMiddleware(tunnelStartHandler))
+    mux.HandleFunc("/admin/tunnel/stop", authMiddleware(tunnelStopHandler))
 
     return corsMiddleware(mux)
 }
@@ -108,6 +113,14 @@ func Run() {
     addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 
     tokenPadded := fmt.Sprintf("%-44s", maskSecret(config.Auth.Token))
+
+    // If the operator passed ngrok credentials via env, bring the public
+    // link up right away so it recovers automatically on every bridge start.
+    if tunnelEnabled() && config.TunnelAutoStart {
+        if err := StartTunnel(); err != nil {
+            logInfo("tunnel: not started: " + err.Error())
+        }
+    }
     fmt.Printf(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║           Z.AI Direct Bridge Server Started                   ║

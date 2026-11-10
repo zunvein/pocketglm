@@ -59,6 +59,10 @@ type Config struct {
 	// multi-account round-robin rotation (active token chosen per request).
 	ZaiTokens []string
 	AgentMode bool
+	// TunnelAutoStart brings the ngrok public link up as soon as the
+	// bridge starts (only when NGROK_AUTHTOKEN is set). The Android app
+	// keeps its own on/off switch; env NGROK_AUTOSTART=0 disables this.
+	TunnelAutoStart bool
 	// AgentModeVariant selects the agent-mode compatibility shim:
 	//   "modern" (default) — XML-sectioned prompt shim ported from
 	//                        DeepseekFreeAPI (see agent.go)
@@ -109,6 +113,9 @@ func loadConfig() *Config {
 	c.Timeouts.Default = 300000
 	c.ZaiToken = ""
 	c.AgentMode = false
+	// The public link follows the app's own switch (NGROK_AUTOSTART=0
+	// disables auto-start; the admin endpoints still allow manual start).
+	c.TunnelAutoStart = os.Getenv("NGROK_AUTOSTART") != "0"
 	c.AgentModeVariant = "modern"
 	c.Logging.Level = "debug"
 	c.Logging.Format = "text"
