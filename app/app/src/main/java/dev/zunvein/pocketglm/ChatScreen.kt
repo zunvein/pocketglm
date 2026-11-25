@@ -42,7 +42,7 @@ class ChatScreen(act: MainActivity) : Screen(act) {
 
     override fun build(): View {
         bubbles.addView(empty)
-        scroll.addView(bubbles)
+        scroll.addView(bubbles, android.view.ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP))
 
         val head = Ui.horizontal(ctx)
         head.addView(TextView(ctx).apply {
@@ -173,8 +173,8 @@ class ChatScreen(act: MainActivity) : Screen(act) {
                     if (history.length() > 0) history.remove(history.length() - 1)
                 }
                 when {
-                    err != null -> showError(bubble, err)
                     answer.isEmpty() && h.cancelled -> showContent(bubble, "Stopped.")
+                    err != null -> showError(bubble, err)
                     answer.isEmpty() -> showError(bubble, "The model returned an empty answer.")
                 }
                 setBusy(false)

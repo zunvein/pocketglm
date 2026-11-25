@@ -14,8 +14,4 @@ object Fmt {
         sec < 5400 -> "${sec / 60}m"
         else -> "${sec / 3600}h ${(sec % 3600) / 60}m"
     }
-
-    /** Clock time for log lines: 18:04:12. */
-    fun clock(ms: Long): String =
-        java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(java.util.Date(ms))
 }

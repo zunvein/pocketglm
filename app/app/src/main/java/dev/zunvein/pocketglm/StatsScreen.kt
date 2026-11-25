@@ -54,7 +54,7 @@ class StatsScreen(act: MainActivity) : Screen(act) {
             setPadding(p, p, p, p)
             text = "Loading…"
         }
-        log.addView(logBody)
+        log.addView(logBody, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
         log.put(Ui.buttonRow(ctx,
             Ui.small(ctx, "Reload") { loadLog() },
             Ui.small(ctx, "Copy") { copyLog() },

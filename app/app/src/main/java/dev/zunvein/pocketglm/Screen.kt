@@ -72,9 +72,10 @@ abstract class Screen(protected val act: MainActivity) {
         if (android.os.Build.VERSION.SDK_INT >= 28) v.isAccessibilityHeading = true
     }
 
-    /** Adds [v] to this column with [top] dp of space above it. */
+    /** Adds [v] to this column with [top] dp of space above it, keeping a fixed height (dividers, spacers). */
     protected fun <T : View> LinearLayout.put(v: T, top: Int = 12): T {
-        addView(v, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { topMargin = Ui.dip(ctx, top) })
+        val h = (v.layoutParams as? LinearLayout.LayoutParams)?.height ?: Ui.WRAP
+        addView(v, LinearLayout.LayoutParams(Ui.MATCH, h).apply { topMargin = Ui.dip(ctx, top) })
         return v
     }
 
