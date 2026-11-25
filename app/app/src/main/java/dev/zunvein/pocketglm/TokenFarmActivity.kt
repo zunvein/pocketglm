@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -16,11 +15,9 @@ import android.widget.TextView
 import android.widget.Toast
 
 /**
- * The visible farm run: the page the WebView loads and a live log.
- * The engine is [Farmer]; this screen only hosts it.
- *
- * Every farm line is also appended to bridge.log, so a run that closes by
- * itself on success is still readable from the Logs tab.
+ * The visible farm run: the page the WebView loads and a live log. The engine
+ * is [Farmer]; this screen only hosts it. Every farm line also lands in
+ * bridge.log, so a run that closes by itself on success stays readable in Stats.
  */
 class TokenFarmActivity : Activity() {
 
@@ -32,38 +29,44 @@ class TokenFarmActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         auto = intent.getBooleanExtra(EXTRA_AUTO, false)
-        val pad = Ui.dp(this, 16)
-        val gap = Ui.dp(this, 8)
+        val pad = Ui.dip(this, 16)
+        val gap = Ui.dip(this, 8)
 
-        logView = Ui.mono(this)
+        logView = Ui.mono(this, "").apply {
+            textSize = 11.5f
+            setTextIsSelectable(true)
+            background = Ui.thinkBg(this@TokenFarmActivity)
+            setPadding(pad, pad, pad, pad)
+        }
         host = FrameLayout(this)
 
-        val title = Ui.text(this, "Token farm", 18f, R.color.text, true)
-        val reload = Ui.compact(this, "Reload").apply { setOnClickListener { startFarm() } }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(pad, pad, pad, gap)
-            addView(title, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
-            addView(reload)
+            addView(Ui.title(this@TokenFarmActivity, "Token farm"), LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
+            addView(Ui.small(this@TokenFarmActivity, "Reload") { startFarm() })
         }
 
-        val copy = Ui.compact(this, "Copy log").apply { setOnClickListener { copyLog() } }
-        val share = Ui.compact(this, "Share log").apply { setOnClickListener { shareLog() } }
+        val copy = Ui.small(this, "Copy log") { copyLog() }
+        val share = Ui.small(this, "Share log") { shareLog() }
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(pad, gap, pad, pad)
-            addView(copy, LinearLayout.LayoutParams(0, Ui.WRAP, 1f).apply { marginEnd = gap })
+            addView(copy, LinearLayout.LayoutParams(0, Ui.WRAP, 1f).apply { rightMargin = gap })
             addView(share, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
         }
 
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Ui.resColor(this@TokenFarmActivity, R.color.bg))
             addView(header)
             addView(host, LinearLayout.LayoutParams(Ui.MATCH, 0, 2f))
             addView(ScrollView(this@TokenFarmActivity).apply {
-                addView(logView.apply { setPadding(pad, pad, pad, pad) })
+                isVerticalScrollBarEnabled = false
+                addView(logView, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
             }, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
             addView(actions)
         })
@@ -74,9 +77,9 @@ class TokenFarmActivity : Activity() {
         farmer?.destroy()
         farmer = null
         host.removeAllViews()
-        logView.text = "Starting token farm..."
+        logView.text = "Starting the token farm…"
         if (FarmState.running) {
-            logView.text = "Another farm run is already in progress (the background farm). Try again in a minute."
+            logView.text = "Another farm run is already going (the background farm). Try again in a minute."
             return
         }
         val f = Farmer(
@@ -107,7 +110,7 @@ class TokenFarmActivity : Activity() {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, Redact.text(this@TokenFarmActivity, logView.text.toString()))
         }
-        startActivity(Intent.createChooser(send, "Share farm log"))
+        startActivity(Intent.createChooser(send, "Share the farm log"))
     }
 
     override fun onDestroy() {

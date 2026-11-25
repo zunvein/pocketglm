@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PocketGLM" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="colorAccent">@color/accent</item>
-        <item name="colorControlActivated">@color/accent</item>
+    <style name="Theme.PocketGLM" parent="android:Theme.DeviceDefault.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/card</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/accentFg</item>
+        <item name="android:textColorPrimary">@color/fg</item>
+        <item name="android:textColorHint">@color/muted</item>
     </style>
 </resources>

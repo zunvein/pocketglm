@@ -1,73 +1,58 @@
 package dev.zunvein.pocketglm
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import androidx.appcompat.app.AppCompatActivity
+import android.widget.TextView
 
 /**
  * First-run choice: use a Z.AI account (full model list) or stay a guest
- * (flash models only). Shown once; the Accounts tab can change it later.
+ * (flash models only). Shown once; Accounts can change it later.
  */
-class SetupActivity : AppCompatActivity() {
+class SetupActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = Ui.dp(this, 16)
+        CrashLog.install(this)
 
-        fun option(title: String, body: String, button: Button): View = Ui.card(this).apply {
-            addView(Ui.text(this@SetupActivity, title, 18f, R.color.text, true))
-            addView(Ui.gap(this@SetupActivity, 4))
-            addView(Ui.text(this@SetupActivity, body, 14f, R.color.textDim))
-            addView(Ui.gap(this@SetupActivity, 12))
-            addView(button)
+        val col = Ui.vertical(this, 16)
+        col.addView(TextView(this).apply {
+            text = "Welcome to PocketGLM"
+            textSize = 24f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Ui.resColor(this@SetupActivity, R.color.fg))
+        })
+        col.addView(Ui.muted(this, "PocketGLM runs a local bridge to Z.AI on this phone. Choose who the bridge talks to Z.AI as.").apply {
+            setPadding(0, Ui.dip(this@SetupActivity, 4), 0, 0)
+        })
+
+        fun option(title: String, body: String, action: View) {
+            val card = Ui.card(this, title)
+            card.addView(Ui.muted(this, body))
+            card.addView(action, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply {
+                topMargin = Ui.dip(this@SetupActivity, 12)
+            })
+            col.addView(card, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply {
+                topMargin = Ui.dip(this@SetupActivity, 12)
+            })
         }
 
-        val signIn = Ui.button(this, "Sign in with Z.AI", Ui.Kind.PRIMARY).apply {
-            setOnClickListener {
-                startActivityForResult(Intent(this@SetupActivity, AccountLoginActivity::class.java), REQ_LOGIN)
-            }
-        }
-        val paste = Ui.button(this, "Paste a saved token", Ui.Kind.TONAL).apply {
-            setOnClickListener { AccountDialogs.promptPaste(this@SetupActivity) { finishIfAccount() } }
-        }
-        val guest = Ui.button(this, "Continue as guest", Ui.Kind.TONAL).apply {
-            setOnClickListener { done() }
-        }
+        option("Use my account", "Unlocks the full model list. Sign in with email or GitHub.",
+            Ui.primary(this, "Sign in with Z.AI") {
+                startActivityForResult(Intent(this, AccountLoginActivity::class.java), REQ_LOGIN)
+            })
+        option("Reinstalling?", "Paste the token you copied from Accounts before.",
+            Ui.button(this, "Paste a saved token") { AccountDialogs.promptPaste(this) { finishIfAccount() } })
+        option("Use a guest", "No account needed, but guests only reach the flash models. You can add an account later in Accounts.",
+            Ui.button(this, "Continue as guest") { done() })
 
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-            addView(Ui.text(this@SetupActivity, "Welcome to PocketGLM", 24f, R.color.text, true))
-            addView(Ui.gap(this@SetupActivity, 4))
-            addView(Ui.text(
-                this@SetupActivity,
-                "PocketGLM runs a local bridge to Z.AI on this phone. Choose who the bridge talks to Z.AI as.",
-                14f, R.color.textDim,
-            ))
-            addView(Ui.gap(this@SetupActivity, 16))
-            addView(option(
-                "Use my account",
-                "Unlocks the full model list. Sign in with Google, email or GitHub.",
-                signIn,
-            ))
-            addView(Ui.gap(this@SetupActivity, 12))
-            addView(option(
-                "Reinstalling?",
-                "Paste the token you copied from the Accounts tab before.",
-                paste,
-            ))
-            addView(Ui.gap(this@SetupActivity, 12))
-            addView(option(
-                "Use a guest",
-                "No account needed, but guests only reach the flash models. You can add an account later in the Accounts tab.",
-                guest,
-            ))
-        }
-        setContentView(ScrollView(this).apply { addView(col) })
+        setContentView(ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(col, android.view.ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP))
+        })
     }
 
     private fun finishIfAccount() {

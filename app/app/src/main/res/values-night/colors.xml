@@ -1,14 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#0E1116</color>
-    <color name="surface">#171B22</color>
-    <color name="surfaceAlt">#1F252E</color>
-    <color name="stroke">#2A313B</color>
-    <color name="text">#E8EAED</color>
-    <color name="textDim">#9AA4B2</color>
-    <color name="accent">#2DD4BF</color>
-    <color name="onAccent">#04201C</color>
-    <color name="good">#4ADE80</color>
-    <color name="warn">#FBBF24</color>
-    <color name="bad">#F87171</color>
+    <color name="bg">#121411</color>
+    <color name="card">#1A1D18</color>
+    <color name="sunk">#141613</color>
+    <color name="fg">#E8E6DF</color>
+    <color name="muted">#A3A29A</color>
+    <color name="line">#2E322B</color>
+    <color name="inputline">#4A4E44</color>
+    <color name="accent">#2A6B58</color>
+    <color name="accentFg">#86C9AD</color>
+    <color name="onAccent">#FFFFFF</color>
+    <color name="err">#EBA497</color>
+    <color name="errbg">#3A201C</color>
+    <color name="ok">#A8D49A</color>
+    <color name="okbg">#20301D</color>
+    <color name="cool">#DFBD72</color>
+    <color name="coolbg">#332B17</color>
+    <color name="focus">#7FB0E6</color>
+    <color name="accentSoft">#1F3A32</color>
+    <color name="scrim">#99000000</color>
 </resources>

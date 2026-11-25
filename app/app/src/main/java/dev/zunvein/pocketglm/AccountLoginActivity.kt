@@ -2,43 +2,46 @@ package dev.zunvein.pocketglm
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.view.Gravity
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 
 /**
  * Sign in to chat.z.ai inside the app.
  *
  * Two things matter here:
- *  - A WebView with NO WebViewClient hands every navigation to the system,
- *    which is why the Google / GitHub buttons used to jump out to the default
- *    browser. The client below keeps http(s) pages inside this WebView.
- *  - chat.z.ai gives every visitor an anonymous guest token on arrival, so the
- *    token is only read after the user taps "I am signed in", and a guest
- *    token is refused.
+ *  - a WebView with NO WebViewClient hands every navigation to the system,
+ *    which is why the Google and GitHub buttons used to jump to the browser;
+ *    the client below keeps http(s) pages inside this view;
+ *  - chat.z.ai hands every visitor an anonymous guest token on arrival, so the
+ *    token is only read after the user taps "I am signed in", and a guest token
+ *    is refused.
  *
- * Google often refuses sign-in from embedded browsers; email and GitHub
- * work. The WebView is wiped before and after, so the farm stays anonymous.
+ * The WebView is wiped before and after, so the farm stays anonymous.
  */
 class AccountLoginActivity : Activity() {
 
     private lateinit var webView: WebView
     private lateinit var confirm: android.widget.Button
-    private lateinit var status: android.widget.TextView
+    private lateinit var status: TextView
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         wipe()
 
-        status = Ui.text(this, "Sign in below. When the chat page shows your account, tap the button.", 13f, R.color.textDim).apply {
-            setPadding(Ui.dp(this@AccountLoginActivity, 16), Ui.dp(this@AccountLoginActivity, 12), Ui.dp(this@AccountLoginActivity, 16), Ui.dp(this@AccountLoginActivity, 8))
+        status = Ui.fine(this, "Sign in below. When the chat page shows your account, tap the button.").apply {
+            setPadding(Ui.dip(this@AccountLoginActivity, 16), Ui.dip(this@AccountLoginActivity, 12), Ui.dip(this@AccountLoginActivity, 16), Ui.dip(this@AccountLoginActivity, 8))
         }
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
@@ -59,21 +62,21 @@ class AccountLoginActivity : Activity() {
                 }
             }
         }
-        confirm = Ui.button(this, "I am signed in", Ui.Kind.PRIMARY).apply {
-            setOnClickListener { readToken() }
+        confirm = Ui.primary(this, "I am signed in") { readToken() }
+        val reload = Ui.small(this, "Reload") { webView.loadUrl("https://chat.z.ai/auth") }
+
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(Ui.dip(this@AccountLoginActivity, 12), 0, Ui.dip(this@AccountLoginActivity, 12), 0)
+            addView(status, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
+            addView(reload)
         }
-        val reloadBtn = Ui.compact(this, "Reload").apply {
-            setOnClickListener { webView.loadUrl("https://chat.z.ai/auth") }
-        }
-        val pad = Ui.dp(this, 12)
+        val pad = Ui.dip(this, 12)
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(LinearLayout(this@AccountLoginActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                addView(status, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
-                addView(reloadBtn, LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP).apply { marginEnd = Ui.dp(this@AccountLoginActivity, 12) })
-            })
+            setBackgroundColor(Ui.resColor(this@AccountLoginActivity, R.color.bg))
+            addView(bar, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
             addView(webView, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f))
             addView(confirm, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { setMargins(pad, pad, pad, pad) })
         })
@@ -94,11 +97,9 @@ class AccountLoginActivity : Activity() {
             when (val r = AccountStore.add(applicationContext, token)) {
                 is AccountStore.AddResult.Added -> { toast("Account saved (${r.account.hint})"); wipeAndClose() }
                 AccountStore.AddResult.Duplicate -> { toast("That account is already saved"); wipeAndClose() }
-                AccountStore.AddResult.Guest ->
-                    toast("This is still a guest session. Sign in first, then tap again.")
+                AccountStore.AddResult.Guest -> toast("This is still a guest session. Sign in first, then tap again.")
                 is AccountStore.AddResult.Invalid -> toast(r.reason)
-                is AccountStore.AddResult.StorageError ->
-                    toast("Could not store the token securely: ${r.reason}")
+                is AccountStore.AddResult.StorageError -> toast("Could not store the token securely: ${r.reason}")
             }
         }
     }
@@ -116,7 +117,6 @@ class AccountLoginActivity : Activity() {
         finish()
     }
 
-    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
     }
