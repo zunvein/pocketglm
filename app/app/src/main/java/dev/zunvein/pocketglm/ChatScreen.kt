@@ -44,6 +44,12 @@ class ChatScreen(act: MainActivity) : Screen(act) {
         bubbles.addView(empty)
         scroll.addView(bubbles, android.view.ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP))
 
+        val title = TextView(ctx).apply {
+            text = "Chat"
+            textSize = 22f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Ui.resColor(ctx, R.color.fg))
+        }
         val head = Ui.horizontal(ctx)
         head.addView(TextView(ctx).apply {
             text = "Model"
@@ -51,8 +57,9 @@ class ChatScreen(act: MainActivity) : Screen(act) {
             setTextColor(Ui.resColor(ctx, R.color.muted))
             setPadding(0, 0, Ui.dip(ctx, 8), 0)
         })
-        head.addView(modelBtn, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
-        head.addView(clearBtn, LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP).apply { leftMargin = Ui.dip(ctx, 8) })
+        head.addView(modelBtn)
+        head.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+        head.addView(clearBtn)
 
         val row = Ui.horizontal(ctx, false).apply { gravity = Gravity.BOTTOM }
         row.addView(input, LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
@@ -61,8 +68,9 @@ class ChatScreen(act: MainActivity) : Screen(act) {
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             val p = Ui.dip(ctx, 16)
-            setPadding(p, Ui.dip(ctx, 12), p, p)
-            addView(head)
+            setPadding(p, p, p, p)
+            addView(title)
+            addView(head, LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { topMargin = Ui.dip(ctx, 12) })
             addView(scroll, LinearLayout.LayoutParams(Ui.MATCH, 0, 1f).apply {
                 topMargin = Ui.dip(ctx, 10)
                 bottomMargin = Ui.dip(ctx, 10)

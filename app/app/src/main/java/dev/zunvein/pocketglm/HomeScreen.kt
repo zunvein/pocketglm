@@ -163,8 +163,12 @@ class HomeScreen(act: MainActivity) : Screen(act) {
         }
         flip.text = if (h.up || starting) "Stop bridge" else "Start bridge"
 
-        headline.text = if (h.up && h.tokens >= 0) h.tokens.toString() else "–"
-        headline.setTextColor(Ui.resColor(ctx, if (h.up && h.tokens in 0..3) R.color.cool else R.color.fg))
+        headline.text = if (h.up && h.tokens >= 0) h.tokens.toString() else "Off"
+        headline.setTextColor(Ui.resColor(ctx, when {
+            !h.up -> R.color.muted
+            h.tokens in 0..3 -> R.color.cool
+            else -> R.color.fg
+        }))
         caption.text = when {
             !h.up && starting -> "Waiting for the bridge to answer on port 3001."
             !h.up -> "The bridge is not running, so nothing answers on port 3001."

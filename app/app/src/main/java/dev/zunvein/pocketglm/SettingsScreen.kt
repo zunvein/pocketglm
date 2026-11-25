@@ -18,7 +18,8 @@ class SettingsScreen(act: MainActivity) : Screen(act) {
     private var keyShown = false
 
     private lateinit var linkPill: TextView
-    private lateinit var linkText: TextView
+    private lateinit var linkHint: TextView
+    private lateinit var linkUrl: TextView
     private lateinit var linkCopy: Button
     private lateinit var linkSwitch: Ui.SwitchRow
 
@@ -138,19 +139,22 @@ class SettingsScreen(act: MainActivity) : Screen(act) {
     private lateinit var domainInput: android.widget.EditText
 
     private fun linkCard(): View {
-        val c = Ui.card(ctx, "Public link", "ngrok")
+        val c = Ui.card(ctx)
         val head = Ui.horizontal(ctx)
-        head.addView(Ui.muted(ctx, "A URL for this bridge that works away from Wi-Fi."), LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
+        head.addView(Ui.title(ctx, "Public link"), LinearLayout.LayoutParams(0, Ui.WRAP, 1f))
         linkPill = Ui.pill(ctx, "off")
-        head.addView(linkPill, LinearLayout.LayoutParams(Ui.WRAP, Ui.WRAP).apply { leftMargin = Ui.dip(ctx, 8) })
+        head.addView(linkPill)
         c.addView(head)
+        c.put(Ui.muted(ctx, "A URL for this bridge that works away from Wi-Fi, through an ngrok account."), 6)
 
         linkSwitch = Ui.switchRow(ctx, "Share over the internet", "Needs a free ngrok account", Prefs.publicLink(ctx)) { on ->
             onLinkSwitch(on)
         }
-        c.put(linkSwitch, 12)
-        linkText = Ui.mono(ctx, "").apply { setTextIsSelectable(true) }
-        c.put(linkText, 10)
+        c.put(linkSwitch, 10)
+        linkHint = Ui.fine(ctx, "")
+        c.put(linkHint, 10)
+        linkUrl = Ui.mono(ctx, "").apply { setTextIsSelectable(true); visibility = View.GONE }
+        c.put(linkUrl, 6)
         linkCopy = Ui.small(ctx, "Copy link") {
             if (tunnel.url.isNotEmpty()) {
                 act.copy("PocketGLM link", tunnel.url)
@@ -169,38 +173,46 @@ class SettingsScreen(act: MainActivity) : Screen(act) {
     private fun renderLink() {
         val configured = TunnelStore.isConfigured(ctx)
         linkSwitch.set(Prefs.publicLink(ctx) && configured)
-        linkCopy.visibility = if (tunnel.online && tunnel.url.isNotEmpty()) View.VISIBLE else View.GONE
+        val online = tunnel.online && tunnel.url.isNotEmpty()
+        linkCopy.visibility = if (online) View.VISIBLE else View.GONE
+        linkUrl.visibility = if (online) View.VISIBLE else View.GONE
+        linkUrl.text = if (online) tunnel.url + "\n/v1 for OpenAI clients" else ""
+        linkHint.visibility = if (online) View.GONE else View.VISIBLE
         val domain = TunnelStore.domain(ctx)
         when {
             !configured -> {
                 Ui.applyState(linkPill, "off"); linkPill.text = "not set up"
-                linkText.text = "Paste an ngrok authtoken to open a public URL to this bridge."
+                linkHint.text = "Paste an ngrok authtoken to open a public URL to this bridge."
             }
             !bridgeUp -> {
                 Ui.applyState(linkPill, "off"); linkPill.text = "bridge stopped"
-                linkText.text = "Start the bridge on Home to open the link."
+                linkHint.text = "Start the bridge on Home to open the link."
             }
             !tunnel.reachable -> {
                 Ui.applyState(linkPill, "cooling"); linkPill.text = "checking"
-                linkText.text = "Waiting for the bridge."
+                linkHint.text = "Waiting for the bridge."
             }
-            tunnel.online -> {
+            online -> {
                 Ui.applyState(linkPill, "ready"); linkPill.text = "online"
-                linkText.text = tunnel.url + "\n/v1 for OpenAI clients"
             }
             tunnel.starting -> {
                 Ui.applyState(linkPill, "cooling"); linkPill.text = "connecting"
-                linkText.text = "Connecting to ngrok."
+                linkHint.text = "Connecting to ngrok."
             }
             tunnel.error.isNotEmpty() && tunnel.error != "stopped" -> {
                 Ui.applyState(linkPill, "dead"); linkPill.text = "failed"
-                linkText.text = Redact.text(ctx, tunnel.error)
+                linkHint.text = Redact.text(ctx, tunnel.error)
+                linkHint.setTextColor(Ui.resColor(ctx, R.color.err))
             }
             else -> {
                 Ui.applyState(linkPill, "off"); linkPill.text = "off"
-                linkText.text = if (domain.isEmpty()) "Link is off. A random address is used each run."
+                linkHint.text = if (domain.isEmpty()) "Link is off. A random address is used each run."
                 else "Link is off. Address: https://$domain"
             }
+        }
+        if (online) return
+        if (!configured || !bridgeUp || tunnel.reachable && tunnel.error.isEmpty()) {
+            linkHint.setTextColor(Ui.resColor(ctx, R.color.muted))
         }
     }
 
