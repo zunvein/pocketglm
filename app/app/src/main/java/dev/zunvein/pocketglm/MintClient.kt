@@ -1,5 +1,6 @@
 package dev.zunvein.pocketglm
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.Proxy
@@ -9,10 +10,11 @@ import java.net.URL
 /**
  * Talks to the local bridge's POST /admin/mint.
  *
- * One WebView visit gives a single genuine device token plus the Log1
- * response that carries the trusted device session. The bridge validates
- * both and mints [n] more tokens straight into its live pool, so a single
- * visit can feed many chat requests.
+ * One WebView visit gives a single genuine device token plus every Log1
+ * response the page produced (the trusted device registrations — a visit can
+ * make more than one). The bridge keeps the registration that seals the token,
+ * validates it and mints [n] more tokens straight into its live pool, so a
+ * single visit can feed many chat requests.
  */
 object MintClient {
 
@@ -25,7 +27,21 @@ object MintClient {
             val minted: String,
             /** Verdict on the browser's own token (only probed after a rejection). */
             val genuine: String,
-        ) : Outcome()
+            /** How many Log1 bodies the bridge was offered. */
+            val sessions: Int = 0,
+            /** Which one sealed the token (1-based), 0 when the bridge did not say. */
+            val session: Int = 0,
+            /** Token server timestamp minus the captured session's, in ms. */
+            val tsSkewMs: Long = 0L,
+        ) : Outcome() {
+            /** " (session 2/3, ts-skew +4127ms)" for the farm log; empty when unknown. */
+            val sessionNote: String
+                get() {
+                    if (sessions <= 0) return ""
+                    val skew = if (tsSkewMs != 0L) ", ts-skew " + (if (tsSkewMs > 0) "+" else "") + tsSkewMs + "ms" else ""
+                    return " (session " + session + "/" + sessions + skew + ")"
+                }
+        }
 
         /** The bridge answered but refused (bad harvest, bad key, pool write failed). */
         data class Rejected(val code: Int, val reason: String) : Outcome()
@@ -43,9 +59,13 @@ object MintClient {
 
     private const val ENDPOINT = "http://127.0.0.1:3001/admin/mint"
 
-    fun mint(apiKey: String, log1: String, token: String, n: Int): Outcome {
+    fun mint(apiKey: String, log1s: List<String>, token: String, n: Int): Outcome {
+        val sessions = JSONArray()
+        log1s.forEach { sessions.put(it) }
         val body = JSONObject()
-            .put("log1", log1)
+            // "log1" keeps an older bridge happy; "log1s" is what it prefers.
+            .put("log1", log1s.firstOrNull().orEmpty())
+            .put("log1s", sessions)
             .put("token", token)
             .put("n", n)
             // Spend a couple of tokens to prove Aliyun accepts the batch before
@@ -97,6 +117,9 @@ object MintClient {
                     json.optInt("tokenCount", -1),
                     json.optString("verified", "skipped"),
                     json.optString("genuine", "skipped"),
+                    json.optInt("sessions", 0),
+                    json.optInt("session", 0),
+                    json.optLong("tsSkewMs", 0L),
                 )
             } else {
                 val reason = json?.optString("error").orEmpty().ifEmpty { "HTTP $code" }

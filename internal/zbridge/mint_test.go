@@ -31,7 +31,7 @@ func attachProdSchemaDB(t *testing.T) {
 	t.Cleanup(func() { closeDB() })
 }
 
-func withMintStub(t *testing.T, fn func(log1, token string, n int) (*devmint.Minted, error)) {
+func withMintStub(t *testing.T, fn func(log1s []string, token string, n int) (*devmint.Minted, error)) {
 	t.Helper()
 	old := mintFromHarvest
 	mintFromHarvest = fn
@@ -48,7 +48,7 @@ func postMint(t *testing.T, body string) *httptest.ResponseRecorder {
 
 func TestMintHandlerInsertsGenuinePlusMinted(t *testing.T) {
 	attachProdSchemaDB(t)
-	withMintStub(t, func(log1, token string, n int) (*devmint.Minted, error) {
+	withMintStub(t, func(log1s []string, token string, n int) (*devmint.Minted, error) {
 		toks := make([]string, n)
 		for i := range toks {
 			toks[i] = "minted-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26))
@@ -86,7 +86,7 @@ func TestMintHandlerInsertsGenuinePlusMinted(t *testing.T) {
 func TestMintHandlerValidation(t *testing.T) {
 	attachProdSchemaDB(t)
 	called := false
-	withMintStub(t, func(string, string, int) (*devmint.Minted, error) {
+	withMintStub(t, func([]string, string, int) (*devmint.Minted, error) {
 		called = true
 		return &devmint.Minted{Genuine: "g"}, nil
 	})
@@ -120,7 +120,7 @@ func TestMintHandlerValidation(t *testing.T) {
 
 func TestMintHandlerRejectsBadHarvestWithoutEchoingSecrets(t *testing.T) {
 	attachProdSchemaDB(t)
-	withMintStub(t, func(string, string, int) (*devmint.Minted, error) {
+	withMintStub(t, func([]string, string, int) (*devmint.Minted, error) {
 		return nil, errors.New("md5 seal mismatch")
 	})
 	rec := postMint(t, `{"log1":"SECRET-LOG1","token":"SECRET-TOKEN","n":3}`)
@@ -153,8 +153,8 @@ func withVerifyStub(t *testing.T, fn func(token string) (string, error)) {
 	t.Cleanup(func() { mintVerify = old })
 }
 
-func stubBatch(n int) func(log1, token string, nn int) (*devmint.Minted, error) {
-	return func(log1, token string, nn int) (*devmint.Minted, error) {
+func stubBatch(n int) func(log1s []string, token string, nn int) (*devmint.Minted, error) {
+	return func(log1s []string, token string, nn int) (*devmint.Minted, error) {
 		toks := make([]string, n)
 		for i := range toks {
 			toks[i] = "m-" + string(rune('a'+i))
@@ -223,5 +223,58 @@ func TestMintWithoutVerifyNeverCallsAliyun(t *testing.T) {
 	rec := postMint(t, `{"log1":"L","token":"genuine","n":3}`)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"verified":"skipped"`) {
 		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A phone visit registers the device more than once, so the app posts every
+// Log1 body it captured. The handler must pass all of them through in order
+// (dropping blanks and duplicates) and report which one was used.
+func TestMintHandlerForwardsEveryLog1Candidate(t *testing.T) {
+	attachProdSchemaDB(t)
+	var got []string
+	withMintStub(t, func(log1s []string, token string, n int) (*devmint.Minted, error) {
+		got = append([]string(nil), log1s...)
+		return &devmint.Minted{Genuine: token, Session: 1, Tried: len(log1s), SkewMs: 4127}, nil
+	})
+
+	rec := postMint(t, `{"log1":"L0","log1s":["L1","L2","L2",""],"token":"genuine","n":0}`)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	want := []string{"L0", "L1", "L2"}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("candidates = %v, want %v (order matters: newest pairing first)", got, want)
+		}
+	}
+	for _, field := range []string{`"session":2`, `"sessions":3`, `"tsSkewMs":4127`} {
+		if !strings.Contains(rec.Body.String(), field) {
+			t.Errorf("response missing %s: %s", field, rec.Body.String())
+		}
+	}
+}
+
+// The app may send only log1s (no singular field) and only log1 (older build).
+func TestMintHandlerAcceptsEitherShape(t *testing.T) {
+	attachProdSchemaDB(t)
+	calls := 0
+	withMintStub(t, func(log1s []string, token string, n int) (*devmint.Minted, error) {
+		calls++
+		if len(log1s) == 0 {
+			t.Error("empty candidate list")
+		}
+		return &devmint.Minted{Genuine: token}, nil
+	})
+	if rec := postMint(t, `{"log1s":["A","B"],"token":"t","n":0}`); rec.Code != 200 {
+		t.Fatalf("log1s only: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := postMint(t, `{"log1":"A","token":"t","n":0}`); rec.Code != 200 {
+		t.Fatalf("log1 only: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("minter called %d times, want 2", calls)
 	}
 }

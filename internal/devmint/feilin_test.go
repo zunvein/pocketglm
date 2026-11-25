@@ -268,7 +268,7 @@ func TestParseHarvestToleratesDifferentIPSlot(t *testing.T) {
 	}
 	f := append([]string(nil), tpl.Fields()...)
 	f[idxIP] = "2409:40f4:1234::1"
-	if err := checkLayout(&s, f); err != nil {
+	if _, err := checkLayout(&s, f); err != nil {
 		t.Fatalf("checkLayout rejected a differing IP slot: %v", err)
 	}
 	if note := ipNote(&s, f); !strings.Contains(note, "ip-slot=ipv6") || strings.Contains(note, "2409") {

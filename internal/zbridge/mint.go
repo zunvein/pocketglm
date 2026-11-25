@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"zai-api/internal/devmint"
 )
@@ -23,9 +24,15 @@ import (
 // Auth: same API key as the other endpoints.
 //
 //	{"log1": "<Log1 response body or bare DeviceConfig>",
+//	 "log1s": ["<every Log1 body the WebView saw>"],
 //	 "token": "<the genuine device token>",
 //	 "n": 200,
 //	 "verify": true}
+//
+// A phone visit can register the device more than once, and the token is sealed
+// against one of those registrations; the app therefore sends every Log1 body it
+// captured and the bridge keeps the one that seals the token. "log1" alone is
+// still accepted for single-capture clients.
 //
 // -> {"inserted": 201, "minted": 200, "tokenCount": 204, "verified": "ok"}
 //
@@ -38,12 +45,12 @@ import (
 
 const (
 	mintMaxN         = 1000
-	mintMaxBodyBytes = 512 << 10
+	mintMaxBodyBytes = 1 << 20
 )
 
 // mintFromHarvest is a seam so tests can run the handler without real
 // captured vectors.
-var mintFromHarvest = devmint.MintFromHarvest
+var mintFromHarvest = devmint.MintFromHarvestAny
 
 // mintVerify spends one token on a full Aliyun round trip (a seam for tests).
 // It returns the final payload, empty when Aliyun rejected the token.
@@ -53,10 +60,29 @@ var mintVerify = tryCompute
 const mintVerifyProbes = 2
 
 type mintRequest struct {
-	Log1   string `json:"log1"`
-	Token  string `json:"token"`
-	N      int    `json:"n"`
-	Verify bool   `json:"verify"`
+	Log1   string   `json:"log1"`
+	Log1s  []string `json:"log1s"`
+	Token  string   `json:"token"`
+	N      int      `json:"n"`
+	Verify bool     `json:"verify"`
+}
+
+// log1Candidates merges "log1" and "log1s" into one list, dropping blanks and
+// duplicates. The devmint side caps the length.
+func log1Candidates(req mintRequest) []string {
+	out := make([]string, 0, len(req.Log1s)+1)
+	seen := make(map[string]struct{}, len(req.Log1s)+1)
+	for _, l := range append([]string{req.Log1}, req.Log1s...) {
+		if l == "" {
+			continue
+		}
+		if _, dup := seen[l]; dup {
+			continue
+		}
+		seen[l] = struct{}{}
+		out = append(out, l)
+	}
+	return out
 }
 
 // verifyMinted checks the batch against Aliyun with up to mintVerifyProbes
@@ -112,7 +138,14 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if req.Log1 == "" || req.Token == "" {
+	if req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": "log1 and token are required",
+		})
+		return
+	}
+	log1s := log1Candidates(req)
+	if len(log1s) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": "log1 and token are required",
 		})
@@ -125,7 +158,7 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	minted, err := mintFromHarvest(req.Log1, req.Token, req.N)
+	minted, err := mintFromHarvest(log1s, req.Token, req.N)
 	if err != nil {
 		// The error text names the failed validation step only; it never
 		// echoes the submitted token or session material.
@@ -133,6 +166,9 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 			"error": "harvest rejected: " + err.Error(),
 		})
 		return
+	}
+	if minted.Tried == 0 {
+		minted.Tried = len(log1s)
 	}
 
 	verdict, genuineVerdict := "skipped", "skipped"
@@ -163,7 +199,7 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			minted.Tokens = minted.Tokens[used:]
 		}
-		logInfo("mint: " + minted.Layout + " minted=" + verdict + " genuine=" + genuineVerdict)
+		logInfo("mint: " + minted.Layout + " session=" + strconv.Itoa(minted.Session+1) + "/" + strconv.Itoa(minted.Tried) + " minted=" + verdict + " genuine=" + genuineVerdict)
 	}
 
 	all := make([]string, 0, 1+len(minted.Tokens))
@@ -181,13 +217,17 @@ func mintHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	invalidateTokenCount()
 
-	logInfo(fmt.Sprintf("mint: inserted %d device tokens (%d minted), minted=%s genuine=%s", len(all), len(minted.Tokens), verdict, genuineVerdict))
+	logInfo(fmt.Sprintf("mint: inserted %d device tokens (%d minted) from session %d/%d, minted=%s genuine=%s",
+		len(all), len(minted.Tokens), minted.Session+1, minted.Tried, verdict, genuineVerdict))
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"inserted":   len(all),
 		"minted":     len(minted.Tokens),
 		"tokenCount": globalDBState.tokenCount(),
 		"verified":   verdict,
 		"genuine":    genuineVerdict,
+		"sessions":   minted.Tried,
+		"session":    minted.Session + 1,
+		"tsSkewMs":   minted.SkewMs,
 	})
 }
 

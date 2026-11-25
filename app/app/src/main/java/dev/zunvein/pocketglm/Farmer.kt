@@ -48,15 +48,17 @@ class Farmer(
 
     val webView: WebView = WebView(ctx)
 
-    private var log1Body: String? = null
+    private var log1Bodies = ArrayList<String>()
     private var deviceToken: String? = null
     private var settled = false
     private var destroyed = false
+    private var settleScheduled = false
     private var bootInjected = false
     private var pageFailed = false
     private var owns = false
 
     private val log1Deadline = Runnable { settle("Log1 not seen in time") }
+    private val settleSoon = Runnable { settle(null) }
     private val watchdog = Runnable {
         if (!settled) {
             settled = true
@@ -151,13 +153,26 @@ class Farmer(
 
     /** JS callbacks arrive on a private binder thread, so everything hops to main. */
     private inner class HarvestBridge {
+        /**
+         * One visit can register the device more than once (the page has its own
+         * captcha, we start a second instance), and the token is sealed against
+         * whichever registration came last. Every distinct Log1 body is kept so
+         * the bridge can pick the one that actually seals the token; keeping only
+         * the first one is what made farms fail at random.
+         */
         @android.webkit.JavascriptInterface
         fun onLog1(body: String) {
             ui.post {
-                if (settled || destroyed || log1Body != null) return@post
-                log1Body = body
-                log("Device session captured (${body.length} bytes)")
-                if (deviceToken != null) settle(null)
+                if (settled || destroyed) return@post
+                if (log1Bodies.contains(body)) return@post
+                if (log1Bodies.size >= MAX_LOG1) return@post
+                log1Bodies.add(body)
+                val n = log1Bodies.size
+                log(
+                    if (n == 1) "Device session captured (" + body.length + " bytes)"
+                    else "Device session captured #" + n + " (" + body.length + " bytes)"
+                )
+                if (deviceToken != null) scheduleSettle()
             }
         }
 
@@ -166,8 +181,8 @@ class Farmer(
             ui.post {
                 if (settled || destroyed || deviceToken != null) return@post
                 deviceToken = token
-                log("Genuine device token harvested (${token.length} chars)")
-                if (log1Body != null) settle(null) else ui.postDelayed(log1Deadline, LOG1_GRACE_MS)
+                log("Genuine device token harvested (" + token.length + " chars)")
+                if (log1Bodies.isNotEmpty()) scheduleSettle() else ui.postDelayed(log1Deadline, LOG1_GRACE_MS)
             }
         }
 
@@ -177,17 +192,30 @@ class Farmer(
         }
     }
 
+    /**
+     * Both halves of the harvest are in. A late Log1 (the registration the token
+     * ended up sealed against) can still arrive a moment after the token, so
+     * wait a beat instead of settling on the spot.
+     */
+    private fun scheduleSettle() {
+        if (settleScheduled || settled || destroyed) return
+        settleScheduled = true
+        ui.removeCallbacks(log1Deadline)
+        ui.postDelayed(settleSoon, LOG1_SETTLE_MS)
+    }
+
     private fun settle(reason: String?) {
         if (settled || destroyed) return
         val token = deviceToken ?: return
         settled = true
         ui.removeCallbacks(log1Deadline)
+        ui.removeCallbacks(settleSoon)
         ui.removeCallbacks(watchdog)
-        val log1 = log1Body
-        if (log1 == null) log("Device session missing (${reason ?: "unknown"}), falling back to a single token")
+        val log1s = ArrayList(log1Bodies)
+        if (log1s.isEmpty()) log("Device session missing (" + (reason ?: "unknown") + "), falling back to a single token")
         val n = mintCount
         Thread {
-            val (ok, summary) = deliver(log1, token, n)
+            val (ok, summary) = deliver(log1s, token, n)
             ui.post { finish(ok, summary) }
         }.start()
     }
@@ -202,9 +230,10 @@ class Farmer(
         onDone(ok, summary)
     }
 
-    private fun deliver(log1: String?, token: String, n: Int): Pair<Boolean, String> {
-        if (log1 != null && n > 0) {
-            when (val r = MintClient.mint(ApiKeyStore.get(appCtx), log1, token, n)) {
+    private fun deliver(log1s: List<String>, token: String, n: Int): Pair<Boolean, String> {
+        if (log1s.isNotEmpty() && n > 0) {
+            if (log1s.size > 1) log("Sending ${log1s.size} device sessions; the one that seals the token is used")
+            when (val r = MintClient.mint(ApiKeyStore.get(appCtx), log1s, token, n)) {
                 is MintClient.Outcome.Ok -> {
                     return when (r.minted) {
                         "rejected" -> {
@@ -217,7 +246,7 @@ class Farmer(
                             false to "batch rejected by Aliyun"
                         }
                         "ok" -> {
-                            log("Minted batch verified by Aliyun: ${r.inserted} tokens added, pool now ${r.poolSize}")
+                            log("Minted batch verified by Aliyun: ${r.inserted} tokens added, pool now ${r.poolSize}${r.sessionNote}")
                             true to "+${r.inserted} tokens (pool ${r.poolSize})"
                         }
                         else -> {
@@ -251,7 +280,11 @@ class Farmer(
     companion object {
         const val DEFAULT_MINT = 60
         private const val LOG1_GRACE_MS = 15_000L
+        private const val LOG1_SETTLE_MS = 1_500L
         private const val WATCHDOG_MS = 120_000L
+
+        /** Log1 bodies kept per visit; more than a handful is page noise. */
+        private const val MAX_LOG1 = 4
         private const val DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
